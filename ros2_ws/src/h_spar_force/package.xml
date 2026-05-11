@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>h_spar_force</name>
+  <version>0.0.1</version>
+  <description>ROS 2 to Gazebo wrench bridge for applying external forces to links.</description>
+
+  <maintainer email="navid@example.com">navid</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>geometry_msgs</depend>
+
+  <build_depend>gz-transport13</build_depend>
+  <build_depend>gz-msgs10</build_depend>
+
+  <exec_depend>gz-transport13</exec_depend>
+  <exec_depend>gz-msgs10</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
