@@ -1,0 +1,21 @@
+# ROS 2 / colcon outputs
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+ros2_ws/src/vrx/
+
+# Colcon and Python build artifacts
+.colcon*
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+
+# Editor and OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*~
