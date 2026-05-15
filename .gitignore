@@ -3,6 +3,7 @@ ros2_ws/build/
 ros2_ws/install/
 ros2_ws/log/
 ros2_ws/src/vrx/
+velocity_fields/
 
 # Colcon and Python build artifacts
 .colcon*
