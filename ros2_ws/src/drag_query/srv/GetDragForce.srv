@@ -1,0 +1,8 @@
+float64 timestamp
+float64 x
+float64 y
+float64 theta
+---
+float64 fx
+float64 fy
+float64 torque
