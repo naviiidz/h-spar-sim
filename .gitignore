@@ -15,6 +15,13 @@ rrt-star-planners/lookup_tables/
 **/.mypy_cache/
 **/.ruff_cache/
 
+# Generated plots
+tools/vtu_converter/output/
+tools/post_processing/outputs/
+
+# Post-processing inputs (planner logs + pickles)
+tools/post_processing/data/
+
 # Editor and OS files
 .DS_Store
 Thumbs.db
