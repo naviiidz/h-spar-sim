@@ -23,6 +23,45 @@ tools/post_processing/data/
   velocity_vectors.pkl
 ```
 
+## `plot_velocity_vectors.py`
+
+Builds the background velocity-vector figure used by the trajectory plots. The script reads VTU velocity field files, extracts point coordinates and 2D velocity vectors, averages all valid VTU files, optionally removes occupied cells using an occupancy grid, and saves both a PNG preview and a pickled Matplotlib figure.
+
+Default input:
+
+```text
+velocity_fields/sydney_regatta/raw/Velocity2d/*.vtu
+```
+
+Default outputs:
+
+```text
+tools/post_processing/outputs/velocity_vectors.png
+tools/post_processing/data/velocity_vectors.pkl
+```
+
+Usage:
+
+```bash
+python3 tools/post_processing/plot_velocity_vectors.py
+```
+
+Useful options:
+
+- `--arrow-fraction`: fraction of averaged vectors to draw, for example `0.05` draws more arrows than the default `0.03`.
+- `--xmin`, `--xmax`, `--ymin`, `--ymax`: crop the plotted region.
+- `--output-png`: choose a PNG output path.
+- `--output-pkl`: choose a pickle output path.
+- `--occupancy`: overlay and filter vectors using a `.npz` or `.npy` occupancy grid.
+
+Example with a cropped region:
+
+```bash
+python3 tools/post_processing/plot_velocity_vectors.py \
+  --xmin -420 --xmax -80 --ymin 130 --ymax 300 \
+  --arrow-fraction 0.05
+```
+
 ## `plot_trajectories.py`
 
 Overlays planner waypoints and executed robot trajectories on the saved velocity-vector figure.
@@ -40,20 +79,7 @@ Usage:
 python3 tools/post_processing/plot_trajectories.py
 ```
 
-The script looks for `tools/post_processing/data/velocity_vectors.pkl` first. Generate that file with:
-
-```bash
-python3 tools/post_processing/plot_velocity_vectors.py
-```
-
-`plot_velocity_vectors.py` reads VTU velocity fields from the default Sydney Regatta raw data location, averages them, and writes:
-
-```text
-tools/post_processing/outputs/velocity_vectors.png
-tools/post_processing/data/velocity_vectors.pkl
-```
-
-If `tools/post_processing/data/velocity_vectors.pkl` is missing, `plot_trajectories.py` falls back to the older location:
+The script looks for `tools/post_processing/data/velocity_vectors.pkl` first. Generate that file with `plot_velocity_vectors.py`. If it is missing, `plot_trajectories.py` falls back to the older location:
 
 ```text
 tools/vtu_converter/output/velocity_vectors.pkl
