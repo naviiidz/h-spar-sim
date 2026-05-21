@@ -40,7 +40,20 @@ Usage:
 python3 tools/post_processing/plot_trajectories.py
 ```
 
-The script looks for `tools/post_processing/data/velocity_vectors.pkl` first. If it is missing, it falls back to:
+The script looks for `tools/post_processing/data/velocity_vectors.pkl` first. Generate that file with:
+
+```bash
+python3 tools/post_processing/plot_velocity_vectors.py
+```
+
+`plot_velocity_vectors.py` reads VTU velocity fields from the default Sydney Regatta raw data location, averages them, and writes:
+
+```text
+tools/post_processing/outputs/velocity_vectors.png
+tools/post_processing/data/velocity_vectors.pkl
+```
+
+If `tools/post_processing/data/velocity_vectors.pkl` is missing, `plot_trajectories.py` falls back to the older location:
 
 ```text
 tools/vtu_converter/output/velocity_vectors.pkl

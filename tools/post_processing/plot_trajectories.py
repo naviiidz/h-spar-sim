@@ -209,8 +209,8 @@ def plot_goal_path(ax, df: pd.DataFrame, color: str, label: str) -> None:
 	)
 
 	# Unique markers for start/end
-	ax.scatter(x[0], y[0], color=color, marker="*", s=220, edgecolors=color, linewidths=0.0, zorder=12)
-	ax.scatter(x[-1], y[-1], color=color, marker="X", s=180, edgecolors=color, linewidths=0.0, zorder=12)
+	ax.scatter(x[0], y[0], color=color, marker="*", s=600, edgecolors=color, linewidths=0.0, zorder=12)
+	ax.scatter(x[-1], y[-1], color=color, marker="X", s=600, edgecolors=color, linewidths=0.0, zorder=12)
 
 
 def plot_trajectory(ax, df: pd.DataFrame, color: str, label: str) -> None:
@@ -233,8 +233,8 @@ def plot_trajectory(ax, df: pd.DataFrame, color: str, label: str) -> None:
 	)
 
 	# Unique markers for start/end
-	ax.scatter(x[0], y[0], color=color, marker="*", s=220, edgecolors="white", linewidths=1.2, zorder=11)
-	ax.scatter(x[-1], y[-1], color=color, marker="X", s=180, edgecolors="white", linewidths=1.2, zorder=11)
+	ax.scatter(x[0], y[0], color=color, marker="*", s=600, edgecolors="white", linewidths=1.2, zorder=11)
+	ax.scatter(x[-1], y[-1], color=color, marker="X", s=600, edgecolors="white", linewidths=1.2, zorder=11)
 
 
 def annotate_panel(ax, title: str) -> None:
