@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import csv
 import glob
+import json
 import math
 import os
 import re
@@ -41,14 +42,15 @@ from matplotlib.collections import LineCollection
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
 OUTPUT_DIR = SCRIPT_DIR / "outputs"
-DEFAULT_OUTPUT_CSV = OUTPUT_DIR / "lagrangian_particle_trajectories.csv"
-DEFAULT_OUTPUT_GIF = OUTPUT_DIR / "lagrangian_particle_trajectories.gif"
-DEFAULT_VTU_GLOB = REPO_ROOT / "velocity_fields" / "sydney_regatta" / "raw" / "Velocity2d" / "*.vtu"
 VELOCITY_ARRAY_NAMES = ("Velocity2d", "Depth averaged velocity", "velocity")
 COORDINATE_ARRAY_NAMES = ("firedrake_default_coordinates", "Coordinates")
 VTK_TRIANGLE = 5
 VTK_POLYGON = 7
 VTK_QUAD = 9
+CONFIG_ALIASES = {
+	"gif": "generate_gif",
+	"plot": "generate_gif",
+}
 
 
 @dataclass(frozen=True)
@@ -78,6 +80,41 @@ def resolve_vtu_files(pattern: str) -> list[Path]:
 	if not files:
 		raise FileNotFoundError(f"No VTU files matched: {pattern}")
 	return files
+
+
+def infer_map_name(files: list[Path], pattern: str) -> str:
+	if files:
+		parts = files[0].parts
+		if "raw" in parts:
+			raw_index = parts.index("raw")
+			if raw_index > 0:
+				return parts[raw_index - 1]
+
+	pattern_path = Path(pattern)
+	for parent in [pattern_path.parent, *pattern_path.parents]:
+		if parent.name and parent.name not in {"*", "Velocity2d", "raw", "."}:
+			return parent.name
+	return "map"
+
+
+def default_output_paths(map_name: str) -> tuple[Path, Path]:
+	map_output_dir = OUTPUT_DIR / map_name
+	return (
+		map_output_dir / f"{map_name}_lagrangian_particle_trajectories.csv",
+		map_output_dir / f"{map_name}_lagrangian_particle_trajectories.gif",
+	)
+
+
+def normalize_config_key(key: str) -> str:
+	return CONFIG_ALIASES.get(key.replace("-", "_"), key.replace("-", "_"))
+
+
+def load_config_file(path: Path) -> dict:
+	with path.open() as handle:
+		config = json.load(handle)
+	if not isinstance(config, dict):
+		raise ValueError(f"Config file must contain a JSON object: {path}")
+	return {normalize_config_key(str(key)): value for key, value in config.items()}
 
 
 def extract_xml_header(filepath: Path) -> str:
@@ -760,6 +797,11 @@ def animate_trajectories(
 def simulate(args: argparse.Namespace) -> None:
 	rng = np.random.default_rng(args.seed)
 	files = resolve_vtu_files(args.vtu_glob)
+	map_name = args.map_name or infer_map_name(files, args.vtu_glob)
+	default_csv, default_gif = default_output_paths(map_name)
+	output_csv = args.output_csv or default_csv
+	output_gif = args.output_gif or default_gif
+
 	geometry, first_velocity = load_geometry(files[0])
 	series = VtuVelocitySeries(files, geometry, first_velocity, args.field_dt, args.cache_size)
 
@@ -773,8 +815,8 @@ def simulate(args: argparse.Namespace) -> None:
 	release_generation = 0
 	total_released = len(positions)
 
-	args.output_csv.parent.mkdir(parents=True, exist_ok=True)
-	with args.output_csv.open("w", newline="") as handle:
+	output_csv.parent.mkdir(parents=True, exist_ok=True)
+	with output_csv.open("w", newline="") as handle:
 		fieldnames = ["particle_id", "generation", "step", "time", "x", "y", "u", "v", "status", "vtu_frame", "vtu_file"]
 		writer = csv.DictWriter(handle, fieldnames=fieldnames)
 		writer.writeheader()
@@ -834,7 +876,8 @@ def simulate(args: argparse.Namespace) -> None:
 			if not np.any(active) and args.release_interval <= 0.0:
 				break
 
-	print(f"Wrote {args.output_csv}")
+	print(f"Map name: {map_name}")
+	print(f"Wrote {output_csv}")
 	print(f"Seeded {args.particles} particles from {seed_description}")
 	if args.release_interval > 0.0:
 		print(f"Timed releases enabled: added {release_count} particles every {args.release_interval:g} seconds.")
@@ -843,8 +886,8 @@ def simulate(args: argparse.Namespace) -> None:
 	if args.generate_gif:
 		animate_trajectories(
 			geometry=geometry,
-			csv_path=args.output_csv,
-			output_gif=args.output_gif,
+			csv_path=output_csv,
+			output_gif=output_gif,
 			title=f"Lagrangian particle trajectories from {seed_description}",
 			show_mesh=args.gif_show_mesh,
 			max_mesh_edges=args.gif_mesh_edges,
@@ -860,13 +903,18 @@ def simulate(args: argparse.Namespace) -> None:
 			dpi=args.gif_dpi,
 			trail_duration=args.gif_trail_duration,
 		)
-		print(f"Wrote {args.output_gif}")
+		print(f"Wrote {output_gif}")
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(config_defaults: Optional[dict] = None) -> argparse.ArgumentParser:
+	config_defaults = config_defaults or {}
+	has_config_value = set(config_defaults)
+
 	parser = argparse.ArgumentParser(description=__doc__)
-	parser.add_argument("--vtu-glob", default=str(DEFAULT_VTU_GLOB), help="Glob for VTU velocity files.")
-	parser.add_argument("--output-csv", type=Path, default=DEFAULT_OUTPUT_CSV, help="Output trajectory CSV path.")
+	parser.add_argument("--config", type=Path, default=None, help="JSON config file. Command-line options override config values.")
+	parser.add_argument("--vtu-glob", required="vtu_glob" not in has_config_value, help="Glob for VTU velocity files.")
+	parser.add_argument("--map-name", default=None, help="Map name used for default output folder and filenames. Inferred from the VTU path when omitted.")
+	parser.add_argument("--output-csv", type=Path, default=None, help="Output trajectory CSV path. Defaults to backend/lagrangian_sim/outputs/<map_name>/<map_name>_lagrangian_particle_trajectories.csv.")
 	parser.add_argument("--output-stride", type=int, default=1, help="Write trajectory rows every N simulation steps. Releases are always written.")
 	parser.add_argument("--particles", type=int, default=100, help="Number of particles to seed.")
 	parser.add_argument("--steps", type=int, default=300, help="Maximum number of advection steps.")
@@ -889,7 +937,7 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument("--cache-size", type=int, default=4, help="Number of VTU frames to keep in memory.")
 	parser.add_argument("--gif", action="store_true", dest="generate_gif", help="Write an animated GIF of the simulated trajectories.")
 	parser.add_argument("--plot", action="store_true", dest="generate_gif", help=argparse.SUPPRESS)
-	parser.add_argument("--output-gif", type=Path, default=DEFAULT_OUTPUT_GIF, help="Output path for --gif.")
+	parser.add_argument("--output-gif", type=Path, default=None, help="Output path for --gif. Defaults to backend/lagrangian_sim/outputs/<map_name>/<map_name>_lagrangian_particle_trajectories.gif.")
 	parser.add_argument("--gif-fps", type=int, default=10, help="Frames per second for --gif.")
 	parser.add_argument("--gif-max-frames", type=int, default=80, help="Maximum animation frames to render. Use 0 to render every simulation step.")
 	parser.add_argument("--gif-stride", type=int, default=1, help="Render every Nth simulation step. Values greater than 1 override --gif-max-frames.")
@@ -904,12 +952,28 @@ def build_parser() -> argparse.ArgumentParser:
 	parser.add_argument("--gif-border-linewidth", type=float, default=1.4, help="Map border line width for the GIF.")
 	parser.add_argument("--gif-border-alpha", type=float, default=0.95, help="Map border line opacity for the GIF.")
 	parser.add_argument("--plot-mesh-edges", type=int, dest="gif_mesh_edges", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+	parser.set_defaults(**config_defaults)
 	return parser
 
 
 def main(argv: Optional[Iterable[str]] = None) -> None:
-	parser = build_parser()
-	args = parser.parse_args(argv)
+	argv_list = list(argv) if argv is not None else None
+	config_parser = argparse.ArgumentParser(add_help=False)
+	config_parser.add_argument("--config", type=Path, default=None)
+	config_args, _ = config_parser.parse_known_args(argv_list)
+
+	config_defaults = load_config_file(config_args.config) if config_args.config is not None else {}
+	parser = build_parser(config_defaults)
+	valid_dests = {action.dest for action in parser._actions}
+	unknown_keys = sorted(set(config_defaults) - valid_dests)
+	if unknown_keys:
+		raise ValueError(f"Unknown config option(s): {', '.join(unknown_keys)}")
+
+	args = parser.parse_args(argv_list)
+	if args.output_csv is not None:
+		args.output_csv = Path(args.output_csv)
+	if args.output_gif is not None:
+		args.output_gif = Path(args.output_gif)
 	if args.dt <= 0.0:
 		raise ValueError("--dt must be positive.")
 	if args.steps < 0:
