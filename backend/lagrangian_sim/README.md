@@ -31,7 +31,7 @@ Use `--map-name` to override the inferred name.
 
 After running with `--gif`, the generated animation is shown here:
 
-![Lagrangian particle trajectories](docs/assets/lagrangian_particle_trajectories.gif)
+![Lagrangian particle trajectories](outputs/sydney_regatta/sydney_regatta_lagrangian_particle_trajectories.gif)
 
 ## Usage
 
