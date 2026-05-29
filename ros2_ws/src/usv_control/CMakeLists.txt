@@ -48,6 +48,11 @@ install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}/
 )
 
+# Install world and mesh assets for package:// resolution in RViz and Gazebo
+install(DIRECTORY worlds
+  DESTINATION share/${PROJECT_NAME}/
+)
+
 # Install Python scripts
 install(PROGRAMS
   scripts/gz_dynamic_pose_listener.py

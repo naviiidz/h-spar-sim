@@ -88,9 +88,9 @@ class GzDynamicPoseListener(Node):
         """Process a complete Gazebo message and filter for WAMV entities"""
         self.msg_count += 1
         
-        self.get_logger().info(f"\n{'='*60}")
-        self.get_logger().info(f"Dynamic Pose Message #{self.msg_count}")
-        self.get_logger().info(f"{'='*60}")
+        # self.get_logger().info(f"\n{'='*60}")
+        # self.get_logger().info(f"Dynamic Pose Message #{self.msg_count}")
+        # self.get_logger().info(f"{'='*60}")
         
         # Parse poses from the message
         poses = self._parse_poses_from_message(message_text)
@@ -102,7 +102,7 @@ class GzDynamicPoseListener(Node):
             if name == self.robot_name:
                 robot_poses.append(pose_info)
         
-        self.get_logger().info(f"Found {len(robot_poses)} robot entities (name='{self.robot_name}' exactly) out of {len(poses)} total entities:")
+        #self.get_logger().info(f"Found {len(robot_poses)} robot entities (name='{self.robot_name}' exactly) out of {len(poses)} total entities:")
         
         for i, pose_info in enumerate(robot_poses):
             name = pose_info.get('name', 'unknown')
@@ -110,12 +110,12 @@ class GzDynamicPoseListener(Node):
             pos = pose_info.get('position', {})
             ori = pose_info.get('orientation', {})
             
-            self.get_logger().info(f"  🚢 Robot Pose {i}: '{name}' (ID: {entity_id}) - *** MAIN ROBOT ***")
-            self.get_logger().info(f"    Position: x={pos.get('x', 0):.4f}, y={pos.get('y', 0):.4f}, z={pos.get('z', 0):.4f}")
-            if ori:
-                self.get_logger().info(f"    Orientation: x={ori.get('x', 0):.4f}, y={ori.get('y', 0):.4f}, z={ori.get('z', 0):.4f}, w={ori.get('w', 1):.4f}")
-            else:
-                self.get_logger().info("    Orientation: Not available, using identity quaternion")
+            # self.get_logger().info(f"  🚢 Robot Pose {i}: '{name}' (ID: {entity_id}) - *** MAIN ROBOT ***")
+            # self.get_logger().info(f"    Position: x={pos.get('x', 0):.4f}, y={pos.get('y', 0):.4f}, z={pos.get('z', 0):.4f}")
+            # if ori:
+            #     self.get_logger().info(f"    Orientation: x={ori.get('x', 0):.4f}, y={ori.get('y', 0):.4f}, z={ori.get('z', 0):.4f}, w={ori.get('w', 1):.4f}")
+            # else:
+            #     self.get_logger().info("    Orientation: Not available, using identity quaternion")
             
             # Publish TF transform for the main robot
             self._publish_wamv_tf(pos, ori)

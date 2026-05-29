@@ -110,11 +110,6 @@ ros2 launch usv_control usv_bringup.launch.py
 - `max_thrust` (default: 250.0 N)
 - `world_name` (default: sydney_regatta)
 
----
-
-### `_usv_velocity_controller.launch.py` (Helper)
-
-Launches only the velocity controller for independent testing.
 
 **Usage**:
 ```bash
@@ -138,4 +133,26 @@ ros2 launch usv_control multi_usv_bringup.launch.py robot_names:=wamv1,wamv2
 - The velocity controller includes thrust limiting and deadband to prevent servo jitter
 - Pose estimation requires active Gazebo simulation
 - All topics use the `/wamv/` namespace - modify launch files for different robot names
+
+## Worlds / Mesh Assets
+
+Place any `.dae` world or mesh files in the `worlds/` directory of this package so they are installed into the package share and can be referenced with `package://` URLs.
+
+- Source (in your workspace): `ros2_ws/src/usv_control/worlds/<file.dae>`
+- Installed (after build): `install/share/usv_control/worlds/<file.dae>`
+
+After building the workspace the meshes can be referenced from RViz or Marker messages using a `package://` URL; for example:
+
+`package://usv_control/worlds/sydney_regatta_shore.dae`
+
+Example workflow:
+
+```bash
+source /opt/ros/$ROS_DISTRO/setup.bash
+cd /home/navid/h-spar-sim/ros2_ws
+colcon build --packages-select usv_control --symlink-install --merge-install
+source install/setup.bash
+ros2 launch usv_control usv_bringup.launch.py
+ros2 run particle_sampling particle_sampling_node
+```
 
