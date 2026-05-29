@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>particle_sampling</name>
+  <version>0.1.0</version>
+  <description>Sample particles in front of the robot from a particle trajectory CSV.</description>
+  <maintainer email="navid@example.com">Navid</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>visualization_msgs</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
