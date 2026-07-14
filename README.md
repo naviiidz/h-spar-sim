@@ -78,29 +78,41 @@ This launches:
 - Gazebo with the Sydney Regatta environment
 - VRX plugins and simulation world
 
-### Step 2: Run the Drag Query Service
+### Step 2: Bridge Front- and Back-end 
 
 ```bash
-ros2 run drag_query drag_query_server.py
+ros2 launch h_spar_experiments experiment1.launch.py
 ```
 
-This starts the service that:
-- Loads the velocity field database (`velocity_lookup.h5`)
-- Loads robot configuration from `robot_config.yaml`
-- Listens for drag force requests on `/get_drag_force`
+This launch file starts:
+- `ros_to_gazebo_wrench_bridge` to forward wrench commands into Gazebo
+- `drag_query_server` to provide hydrodynamic drag values
+- `usv_bringup.launch.py` from `usv_control` for vehicle bringup
+- `drag_force_node` to query drag and publish wrench commands
 
-### Step 3: Bridge Forces to Gazebo
+### Step 3: Launch DWA planner
 
 ```bash
-ros2 run h_spar_force ros_to_gazebo_wrench_bridge
+ros2 launch usv_planners dwa_planner.launch.py
 ```
 
-This connects:
-- Drag force calculations from `drag_query` service
-- Force application to the simulated vehicle in Gazebo
+This launch file starts the `simple_dwa_planner` node and a `path_visualizer` node, with simulation time enabled by default and ROS topic remaps for `/odom`, `/cmd_vel`, and `/goal_pose`.
 
-### Step 4: TODO
-To be completed
+### Step 4: Bridge Global and Local Planners (TODO)
+
+```bash
+cd /home/navid/h-spar-sim/ros2_ws/src/usv_planners && python3 scripts/sequential_goal_sender.py --preset rrt
+```
+
+This script sends a preset sequence of navigation goals to the planner; the RRT-style presets include `rrt`, `vf-rrt`, and `svf-rrt`.
+
+### Step 5: Run Particle Sampling Mechanism
+
+```bash
+ros2 run particle_sampling particle_sampling_node
+```
+
+This starts the particle sampling node, which generates and tracks particle-based sampling behavior for the simulation workflow.
 
 ## References
 
