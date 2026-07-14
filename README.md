@@ -1,7 +1,6 @@
 # H-SPAR Simulation
 
-## TODO: 
-Merge instances of VTU folder
+![H-SPAR front/back](docs/assets/h-spar-front-back.gif)
 
 A ROS2-based hydrodynamic simulation environment for autonomous surface vehicles (ASVs) using Gazebo and the Virtual RobotX (VRX) framework.
 
@@ -13,10 +12,8 @@ This project simulates an autonomous surface vehicle in a water environment with
 - **Drag force modeling** - Real-time hydrodynamic drag calculations from velocity field data
 - **ROS2 integration** - Full ROS2 middleware support for sensors, actuators, and control
 
-## Lagrangian Particle Simulation
 
-![Lagrangian particle trajectories](backend/lagrangian_sim/docs/assets/lagrangian_particle_trajectories.gif)
-![H-SPAR front/back](docs/assets/h-spar-front-back.gif)
+
 
 ## Prerequisites
 
