@@ -2,6 +2,8 @@
 
 Simulates passive Lagrangian particles directly from VTU velocity files:
 
+![H-SPAR front/back](../../docs/assets/lagrangian_particle_trajectories.gif)
+
 ```text
 VTU velocity -> RK2 advection + random walk -> CSV trajectories
 ```
@@ -26,12 +28,6 @@ backend/lagrangian_sim/outputs/sydney_regatta/sydney_regatta_lagrangian_particle
 ```
 
 Use `--map-name` to override the inferred name.
-
-## Visualization
-
-After running with `--gif`, the generated animation is shown here:
-
-![Lagrangian particle trajectories](outputs/sydney_regatta/sydney_regatta_lagrangian_particle_trajectories.gif)
 
 ## Usage
 
