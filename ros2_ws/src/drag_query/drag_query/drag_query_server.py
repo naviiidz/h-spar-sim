@@ -25,6 +25,7 @@ class DragQueryServer(Node):
         
         # Load velocity field lookup database (HDF5)
         self.lookup_db = '/home/navid/h-spar-sim/velocity_fields/sydney_regatta/h5/velocity_lookup.h5'
+        #self.lookup_db = '/home/navid/h-spar-sim/velocity_fields/sydney_regatta/h5/average_spatial_velocity.h5'
         try:
             self.velocity_lookup = VelocityLookup(self.lookup_db)
             self.get_logger().info(f'Loaded velocity lookup database: {self.lookup_db}')

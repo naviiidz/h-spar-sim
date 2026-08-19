@@ -8,5 +8,5 @@ cx: 0.8  # drag coefficient in x-direction (longitudinal)
 cy: 1.2  # drag coefficient in y-direction (lateral)
 
 # Reference areas for drag calculation
-Ax: 3.0  # m^2 - reference area in x-direction (length * average height)
-Ay: 6.0  # m^2 - reference area in y-direction (width * average height)
+Ax: 0.1425  # m^2 - reference area in x-direction (length * average height)
+Ay: 0.25  # m^2 - reference area in y-direction (width * average height)

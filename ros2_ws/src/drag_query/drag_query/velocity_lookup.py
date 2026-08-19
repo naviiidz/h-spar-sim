@@ -20,12 +20,58 @@ class VelocityLookup:
     def __init__(self, filepath='velocity_lookup.h5'):
         self.filepath = filepath
         self._load_metadata()
+        self._load_cache()
     
     def _load_metadata(self):
         """Load metadata from HDF5 file."""
         with h5py.File(self.filepath, 'r') as f:
             self.n_timestamps = f.attrs.get('n_timestamps', 0)
             self.timestamps = sorted([int(k.replace('timestamp_', '')) for k in f.keys()])
+
+    def _load_cache(self):
+        """Load fixed coordinates, the shared KDTree, and all per-timestamp velocities."""
+        if not self.timestamps:
+            raise ValueError(f"No timestamps found in lookup file: {self.filepath}")
+
+        self._velocities_by_timestamp = {}
+
+        with h5py.File(self.filepath, 'r') as f:
+            first_key = f'timestamp_{self.timestamps[0]:04d}'
+            if first_key not in f:
+                raise ValueError(f"Timestamp {self.timestamps[0]} not found in lookup file")
+
+            first_group = f[first_key]
+            self.coordinates = first_group['coordinates'][:]
+            self._tree = KDTree(self.coordinates)
+
+            for timestamp in self.timestamps:
+                key = f'timestamp_{timestamp:04d}'
+                if key not in f:
+                    raise ValueError(f"Timestamp {timestamp} not found in lookup file")
+
+                group = f[key]
+                coords = group['coordinates'][:]
+                if not np.array_equal(coords, self.coordinates):
+                    raise ValueError(
+                        f"Coordinates differ at timestamp {timestamp}; shared KDTree requires fixed coordinates"
+                    )
+
+                self._velocities_by_timestamp[timestamp] = group['velocities'][:]
+                if self._velocities_by_timestamp[timestamp].shape[0] != self.coordinates.shape[0]:
+                    raise ValueError(
+                        f"Velocity count mismatch at timestamp {timestamp}: "
+                        f"expected {self.coordinates.shape[0]}, got {self._velocities_by_timestamp[timestamp].shape[0]}"
+                    )
+
+    def _get_timestamp_velocities(self, timestamp):
+        try:
+            return self._velocities_by_timestamp[int(timestamp)]
+        except KeyError as exc:
+            raise ValueError(f"Timestamp {timestamp} not found") from exc
+
+    def _query_nearest_point(self, x, y):
+        distance, index = self._tree.query([x, y])
+        return float(distance), int(index)
     
     def get_all_velocities(self, timestamp):
         """Get all coordinates and velocity vectors for a given timestamp.
@@ -34,14 +80,7 @@ class VelocityLookup:
             coords: (N, 2) array of [x, y] coordinates
             vels: (N, 2) array of [vx, vy] velocity vectors
         """
-        key = f'timestamp_{timestamp:04d}'
-        with h5py.File(self.filepath, 'r') as f:
-            if key not in f:
-                raise ValueError(f"Timestamp {timestamp} not found")
-            group = f[key]
-            coords = group['coordinates'][:]
-            vels = group['velocities'][:]
-        return coords, vels
+        return self.coordinates, self._get_timestamp_velocities(timestamp)
     
     def get_velocity_at_point(self, timestamp, x, y, tolerance=1e-3):
         """Get velocity vector at a specific (x, y) coordinate.
@@ -54,13 +93,9 @@ class VelocityLookup:
         Returns:
             [vx, vy] array or None if no point found within tolerance
         """
-        coords, vels = self.get_all_velocities(timestamp)
-        
-        # Find nearest point
-        distances = np.sqrt((coords[:, 0] - x)**2 + (coords[:, 1] - y)**2)
-        min_dist_idx = np.argmin(distances)
-        min_dist = distances[min_dist_idx]
-        
+        vels = self._get_timestamp_velocities(timestamp)
+        min_dist, min_dist_idx = self._query_nearest_point(x, y)
+
         if min_dist <= tolerance:
             return vels[min_dist_idx]
         return None
@@ -72,8 +107,7 @@ class VelocityLookup:
             [vx, vy], [x_nearest, y_nearest]
         """
         coords, vels = self.get_all_velocities(timestamp)
-        distances = np.sqrt((coords[:, 0] - x)**2 + (coords[:, 1] - y)**2)
-        min_dist_idx = np.argmin(distances)
+        _, min_dist_idx = self._query_nearest_point(x, y)
         return vels[min_dist_idx], coords[min_dist_idx]
     
     def get_speed(self, timestamp, x, y, tolerance=1e-3):
@@ -109,12 +143,8 @@ class VelocityLookup:
         print(f"  Timestamps: {len(self.timestamps)}")
         print(f"  Time range: {self.timestamps[0]} to {self.timestamps[-1]}")
         
-        # Sample first timestamp
-        with h5py.File(self.filepath, 'r') as f:
-            first_key = f'timestamp_{self.timestamps[0]:04d}'
-            group = f[first_key]
-            n_points = group.attrs['n_points']
-            vels = group['velocities'][:]
+        n_points = self.coordinates.shape[0]
+        vels = self._get_timestamp_velocities(self.timestamps[0])
         print(f"  Points per timestamp: {n_points}")
         print(f"  Velocity components: {vels.shape[1]} (vx, vy)")
 
