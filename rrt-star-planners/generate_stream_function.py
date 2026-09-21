@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections import deque
 from typing import Deque, Optional, Tuple
+import pickle
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -170,7 +171,7 @@ def visualize_stream_function(
 	datum_cell: Tuple[int, int],
 	output_path: str = f"{OUTPUT_DIR}/stream_function.png",
 	occupied_threshold: float = 50.0,
-) -> None:
+) -> plt.Figure:
 	"""Visualize stream function in free space with obstacle overlay and datum marker."""
 	h, w = occupancy_grid.shape
 	extent = [
@@ -201,21 +202,15 @@ def visualize_stream_function(
 	occ = np.where(~free_mask, 1.0, np.nan)
 	ax.imshow(occ, origin="lower", extent=extent, cmap="gray", alpha=0.9)
 
-	# datum marker
-	gy0, gx0 = datum_cell
-	x0, y0 = grid_to_world_center(gx0, gy0, origin, resolution)
-	ax.scatter(x0, y0, c="red", s=120, marker="x", linewidths=2, label="Datum (ψ=0)")
-
 	ax.set_title("Stream Function from Free-Space-Constrained Integration")
 	ax.set_xlabel("X (m)")
 	ax.set_ylabel("Y (m)")
-	ax.legend(loc="upper right")
 	ax.grid(True, alpha=0.2)
 
 	plt.tight_layout()
 	plt.savefig(output_path, dpi=150, bbox_inches="tight")
 	print(f"Saved stream-function visualization to {output_path}")
-	plt.show()
+	return fig
 
 
 if __name__ == "__main__":
@@ -240,7 +235,7 @@ if __name__ == "__main__":
 	np.save(f"{OUTPUT_DIR}/stream_function.npy", psi)
 	print(f"Saved stream function grid to {OUTPUT_DIR}/stream_function.npy")
 
-	visualize_stream_function(
+	fig = visualize_stream_function(
 		psi=psi,
 		occupancy_grid=grid,
 		origin=origin,
@@ -248,3 +243,8 @@ if __name__ == "__main__":
 		datum_cell=datum_cell,
 		output_path=f"{OUTPUT_DIR}/stream_function.png",
 	)
+
+	# Save figure object for later modification
+	with open(f"{OUTPUT_DIR}/stream_function.pkl", "wb") as f:
+		pickle.dump(fig, f)
+	print(f"Saved figure object to {OUTPUT_DIR}/stream_function.pkl")
