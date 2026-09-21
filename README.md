@@ -101,16 +101,29 @@ This launch file starts the `simple_dwa_planner` node and a `path_visualizer` no
 ### Step 4: Bridge Global and Local Planners (TODO)
 
 ```bash
-cd /home/navid/h-spar-sim/ros2_ws/src/usv_planners && python3 scripts/sequential_goal_sender.py --preset rrt
+source ros2_ws/install/setup.bash
+ros2 run usv_planners sequential_goal_sender --preset rrt
 ```
 
-This script sends a preset sequence of navigation goals to the planner; the RRT-style presets include `rrt`, `vf-rrt`, and `svf-rrt`.
+This script sends a preset sequence of navigation goals to the planner. Survey patrol presets are available at 0 degrees (`survey`), 45 degrees (`survey_45`), and 90 degrees (`survey_90`). The RRT-style presets include `rrt`, `vf-rrt`, and `svf-rrt`. Waypoints can also be loaded from a CSV file using `astar_wp_file`:
+
+```bash
+ros2 run usv_planners sequential_goal_sender --preset astar_wp_file waypoints.csv
+```
 
 ### Step 5: Run Particle Sampling Mechanism
 
 ```bash
-ros2 run particle_sampling particle_sampling_node
+ros2 run particle_sampling particle_sampling_node --ros-args   -p probabilistic_sampling:=false   -p sampling_radius:=5.0   -p capture_v0:=0.5   -p capture_sigma:=0.2
+
 ```
+
+Particle sampling parameters:
+
+- `probabilistic_sampling`: Enables the probabilistic capture model. Set to `true` to enable it; `false` uses deterministic geometric sampling.
+- `sampling_radius`: Candidate sampling radius around the USV, in meters.
+- `capture_v0`: Design intake velocity, in m/s. Capture probability is highest when relative particle speed equals this value.
+- `capture_sigma`: Sensitivity of capture probability to speed differences. Smaller values make capture more selective.
 
 This starts the particle sampling node, which generates and tracks particle-based sampling behavior for the simulation workflow.
 
