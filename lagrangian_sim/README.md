@@ -23,8 +23,8 @@ The simulator infers the map name from the VTU path. For example, `velocity_fiel
 Default outputs are grouped by map name:
 
 ```text
-backend/lagrangian_sim/outputs/sydney_regatta/sydney_regatta_lagrangian_particle_trajectories.csv
-backend/lagrangian_sim/outputs/sydney_regatta/sydney_regatta_lagrangian_particle_trajectories.gif  # with --gif
+lagrangian_sim/outputs/sydney_regatta/sydney_regatta_lagrangian_particle_trajectories.csv
+lagrangian_sim/outputs/sydney_regatta/sydney_regatta_lagrangian_particle_trajectories.gif  # with --gif
 ```
 
 Use `--map-name` to override the inferred name.
@@ -34,15 +34,15 @@ Use `--map-name` to override the inferred name.
 Run from a config file:
 
 ```bash
-python3 backend/lagrangian_sim/simulate_lagrangian_particles.py \
-  --config backend/lagrangian_sim/config.example.json
+python3 lagrangian_sim/simulate_lagrangian_particles.py \
+  --config lagrangian_sim/config.example.json
 ```
 
 Command-line options override config values:
 
 ```bash
-python3 backend/lagrangian_sim/simulate_lagrangian_particles.py \
-  --config backend/lagrangian_sim/config.example.json \
+python3 lagrangian_sim/simulate_lagrangian_particles.py \
+  --config lagrangian_sim/config.example.json \
   --particles 200 \
   --gif-fps 3
 ```
@@ -50,7 +50,7 @@ python3 backend/lagrangian_sim/simulate_lagrangian_particles.py \
 Basic CSV run:
 
 ```bash
-python3 backend/lagrangian_sim/simulate_lagrangian_particles.py \
+python3 lagrangian_sim/simulate_lagrangian_particles.py \
   --vtu-glob "velocity_fields/sydney_regatta/raw/Velocity2d/*.vtu" \
   --particles 200 \
   --steps 600 \
@@ -62,7 +62,7 @@ python3 backend/lagrangian_sim/simulate_lagrangian_particles.py \
 Run with timed particle releases and a GIF:
 
 ```bash
-python3 backend/lagrangian_sim/simulate_lagrangian_particles.py \
+python3 lagrangian_sim/simulate_lagrangian_particles.py \
   --vtu-glob "velocity_fields/sydney_regatta/raw/Velocity2d/*.vtu" \
   --particles 100 \
   --steps 300 \
@@ -78,7 +78,7 @@ python3 backend/lagrangian_sim/simulate_lagrangian_particles.py \
 Run on another map:
 
 ```bash
-python3 backend/lagrangian_sim/simulate_lagrangian_particles.py \
+python3 lagrangian_sim/simulate_lagrangian_particles.py \
   --vtu-glob "velocity_fields/my_map/raw/Velocity2d/*.vtu" \
   --map-name my_map \
   --particles 100 \
@@ -89,13 +89,13 @@ python3 backend/lagrangian_sim/simulate_lagrangian_particles.py \
 Run with a custom output GIF path:
 
 ```bash
-python3 backend/lagrangian_sim/simulate_lagrangian_particles.py \
+python3 lagrangian_sim/simulate_lagrangian_particles.py \
   --vtu-glob "velocity_fields/sydney_regatta/raw/Velocity2d/*.vtu" \
   --particles 100 \
   --steps 300 \
   --diffusivity 0.05 \
   --gif \
-  --output-gif backend/lagrangian_sim/outputs/sydney_regatta/my_particle_run.gif
+  --output-gif lagrangian_sim/outputs/sydney_regatta/my_particle_run.gif
 ```
 
 ## Seeding Options
@@ -121,10 +121,10 @@ python3 backend/lagrangian_sim/simulate_lagrangian_particles.py \
 
 - `--config`: JSON config file. Command-line options override config values. See `config.example.json`.
 - `--map-name`: map name used for default output folder and filenames. It is inferred from the VTU path when omitted.
-- `--output-csv`: trajectory CSV path. Defaults to `backend/lagrangian_sim/outputs/<map_name>/<map_name>_lagrangian_particle_trajectories.csv`.
+- `--output-csv`: trajectory CSV path. Defaults to `lagrangian_sim/outputs/<map_name>/<map_name>_lagrangian_particle_trajectories.csv`.
 - `--output-stride`: write trajectory rows every N simulation steps. Releases are always written. Use this to reduce CSV size and speed up long runs.
 - `--gif`: write an animated GIF with the mesh border and particle paths.
-- `--output-gif`: choose the GIF output path. Defaults to `backend/lagrangian_sim/outputs/<map_name>/<map_name>_lagrangian_particle_trajectories.gif`.
+- `--output-gif`: choose the GIF output path. Defaults to `lagrangian_sim/outputs/<map_name>/<map_name>_lagrangian_particle_trajectories.gif`.
 - `--gif-fps`: choose the animation frame rate.
 - `--gif-max-frames`: cap the number of rendered GIF frames. Defaults to `80`; use `0` to render every simulation step.
 - `--gif-stride`: render every Nth simulation step. Values greater than `1` override `--gif-max-frames`.
