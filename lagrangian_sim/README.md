@@ -2,7 +2,7 @@
 
 Simulates passive Lagrangian particles directly from VTU velocity files:
 
-![H-SPAR front/back](../../docs/assets/lagrangian_particle_trajectories.gif)
+![Lagrangian particle trajectories](../docs/assets/lagrangian_particle_trajectories.gif)
 
 ```text
 VTU velocity -> RK2 advection + random walk -> CSV trajectories
