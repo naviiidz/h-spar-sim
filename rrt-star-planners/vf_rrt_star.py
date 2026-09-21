@@ -187,6 +187,7 @@ class VFRRTStar(VFRRTStarSkeleton):
         self.parent: Dict[int, Optional[int]] = {}
         self.children: Dict[int, Set[int]] = {}
         self.cost: List[float] = []
+        self.final_path_node_id: Optional[int] = None
 
         self.path: List[Tuple[float, float]] = []
         self.stats = PlannerStats()
@@ -679,12 +680,24 @@ class VFRRTStar(VFRRTStarSkeleton):
         # fallback if not reached
         if goal_id is None:
             closest = min(range(len(self.nodes)), key=lambda i: euclidean(self.nodes[i], goal))
-            goal_id = closest
+            closest_dist = euclidean(self.nodes[closest], goal)
             self.stats.iterations = self.max_iter
             self.stats.runtime_sec = time.time() - start_time
-            print("⚠ Goal not reached exactly")
-            print(f"  Closest node distance to goal: {euclidean(self.nodes[closest], goal):.1f} m")
+            if closest_dist < self.goal_tolerance and self.collision_free(self.nodes[closest], goal):
+                goal_id = len(self.nodes)
+                self.nodes.append(goal)
+                self.parent[goal_id] = closest
+                self.children[goal_id] = set()
+                self.children[closest].add(goal_id)
+                self.cost.append(self.cost[closest] + self.edge_cost(self.nodes[closest], goal))
+                self.stats.reached_goal = True
+                print(f"✓ Goal reached by final connection ({self.stats.runtime_sec:.2f}s)")
+            else:
+                goal_id = closest
+                print("⚠ Goal not reached")
+                print(f"  Closest node distance to goal: {closest_dist:.1f} m")
 
+        self.final_path_node_id = goal_id
         self.path = self.extract_path(goal_id)
 
         if live_fig is not None:
@@ -758,8 +771,8 @@ def visualize_solution(
     ax.set_ylim([extent[2], extent[3]])
 
     plt.tight_layout()
-    plt.savefig(f"{output_dir}/svf_rrt_star_path_refactored.png", dpi=150, bbox_inches="tight")
-    print(f"\n✓ Visualization saved: {output_dir}/svf_rrt_star_path_refactored.png")
+    plt.savefig(f"{output_dir}/vf_rrt_star_path_refactored.png", dpi=150, bbox_inches="tight")
+    print(f"\n✓ Visualization saved: {output_dir}/vf_rrt_star_path_refactored.png")
     plt.show()
 
 
@@ -776,7 +789,7 @@ def main() -> None:
     print(f"✓ Velocity lookup bounds: x=[{bounds[0]:.1f}, {bounds[1]:.1f}], y=[{bounds[2]:.1f}, {bounds[3]:.1f}]")
 
     start = (-400, 200)
-    goal = (300, 200)
+    goal = (-100, 280)
 
 
     planner = VFRRTStar(
@@ -785,12 +798,12 @@ def main() -> None:
         resolution=resolution,
         interpolators=(u_interp, v_interp),
         # core planner
-        max_iter=5000,
-        step_size=20,
-        goal_sample_rate=0.0,
-        sample_checks=100,
+        max_iter=200,
+        step_size=10,
+        goal_sample_rate=0.05,
+        sample_checks=30,
         rewire_base_radius=200.0,
-        goal_tolerance=30.0,
+        goal_tolerance=5.0,
         log_every=100,
         # adaptive lambda tuning
         lambda_gain=1.0,
@@ -804,20 +817,23 @@ def main() -> None:
         use_field_magnitude_scaling=False,
         field_scale_m=1.0,
         # step-by-step debug
-        debug_step_by_step=True,
-        debug_pause_sec=0.1,
+        debug_step_by_step=False,
+        debug_pause_sec=0.0,
         debug_live_plot=True,
     )
+
 
     success = planner.plan(start, goal)
 
     if len(planner.path) > 1:
         path_length = sum(euclidean(planner.path[i], planner.path[i + 1]) for i in range(len(planner.path) - 1))
+        final_upstream_cost = planner.cost[planner.final_path_node_id] if planner.final_path_node_id is not None else float("nan")
         print("\n" + "=" * 60)
         print("VF-RRT* Results")
         print("=" * 60)
         print(f"✓ Path found with {len(planner.path)} waypoints")
         print(f"  Path length: {path_length:.1f} m")
+        print(f"  Final upstream cost: {final_upstream_cost:.3f}")
         print(f"  Tree nodes explored: {len(planner.nodes)}")
         print(f"  Ineffective extensions: {planner.stats.ineffective_extensions}")
         print(f"  Goal reached: {success}")

@@ -14,7 +14,7 @@ class RRTStar:
     """RRT* path planning algorithm"""
     
     def __init__(self, occupancy_grid, origin, resolution, max_iter=5000, 
-                 step_size=15, goal_sample_rate=0.15):
+                 step_size=10, goal_sample_rate=0.15):
         """
         occupancy_grid: 2D numpy array (0=free, 100=occupied)
         origin: (x_min, y_min) in world coordinates
@@ -44,6 +44,40 @@ class RRTStar:
         grid_x = int((x - self.origin[0]) / self.resolution)
         grid_y = int((y - self.origin[1]) / self.resolution)
         return grid_x, grid_y
+
+    def is_free_state(self, point):
+        """Check whether a world-coordinate point lies in free grid space."""
+        gx, gy = self.world_to_grid(point[0], point[1])
+        if gx < 0 or gx >= self.grid_width or gy < 0 or gy >= self.grid_height:
+            return False
+        return self.grid[gy, gx] <= 50
+
+    def sample_state(self, goal):
+        """Goal-biased sampling using the same free-space rejection pattern as VF-RRT*."""
+        if np.random.random() < self.goal_sample_rate:
+            return goal
+
+        # Rejection-sample inside the experiment ROI until the point is in free space.
+        for _ in range(500):
+            point = (
+                float(np.random.uniform(-600, 500)),
+                float(np.random.uniform(150, 300)),
+            )
+            if self.is_free_state(point):
+                return point
+
+        # Fallback: choose the center of a random free occupancy-grid cell.
+        free_cells = np.argwhere(self.grid <= 50)
+        if len(free_cells) == 0:
+            return (
+                float(np.random.uniform(self.world_x_min, self.world_x_max)),
+                float(np.random.uniform(self.world_y_min, self.world_y_max)),
+            )
+        gy, gx = free_cells[np.random.randint(len(free_cells))]
+        return (
+            self.origin[0] + (float(gx) + 0.5) * self.resolution,
+            self.origin[1] + (float(gy) + 0.5) * self.resolution,
+        )
     
     def is_collision_free(self, x1, y1, x2, y2, num_checks=10):
         """Check if line segment is collision-free using linear interpolation"""
@@ -85,14 +119,7 @@ class RRTStar:
         start_time = time.time()
         
         for iteration in range(self.max_iter):
-            # Sample random point or goal
-            if np.random.random() < self.goal_sample_rate:
-                random_point = goal
-            else:
-                random_point = (
-                float(np.random.uniform(-600, 500)),
-                float(np.random.uniform(150, 300))
-                )
+            random_point = self.sample_state(goal)
             
             # Find nearest node
             nearest_idx = min(range(len(self.nodes)),
@@ -147,14 +174,15 @@ class RRTStar:
                         self.costs[idx] = new_cost
             
             # Check if goal reached
-            if euclidean(new_point, goal) < 30:
+            if euclidean(new_point, goal) < self.step_size:
                 self.nodes.append(goal)
                 goal_idx = len(self.nodes) - 1
                 self.edges[goal_idx] = new_idx
                 goal_reached = True
                 elapsed = time.time() - start_time
                 print(f"✓ Goal reached at iteration {iteration + 1} ({elapsed:.2f}s)")
-                break
+                self.path = self._extract_path(goal_idx)
+                return True
             
             if (iteration + 1) % 200 == 0:
                 elapsed = time.time() - start_time
@@ -270,7 +298,8 @@ def save_trajectory_csv(path_points, output_path):
 
 # Load occupancy grid from NPZ
 print("Loading occupancy grid from NPZ...")
-data = np.load(f'{output_dir}/occupancy_grid.npz')
+# occupancy NPZ lives in the lookup data folder, not the output folder
+data = np.load(f'{LOOKUP_FOLDER}/occupancy_grid.npz')
 grid = data['grid']
 origin_x = float(data['origin_x'])
 origin_y = float(data['origin_y'])
@@ -296,11 +325,11 @@ except Exception:
 
 # Define start and goal in free space
 start = (-400, 200)
-goal = (300, 200)
+goal = (-100, 280)
 
 
 # Run RRT*
-rrt = RRTStar(grid, origin, resolution, max_iter=5000, step_size=20, goal_sample_rate=0.005)
+rrt = RRTStar(grid, origin, resolution, max_iter=1000, step_size=20, goal_sample_rate=0.05)
 success = rrt.plan(start, goal)
 
 # Print results

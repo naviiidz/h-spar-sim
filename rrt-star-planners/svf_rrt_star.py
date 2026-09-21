@@ -202,6 +202,7 @@ class VFRRTStar(VFRRTStarSkeleton):
         self.parent: Dict[int, Optional[int]] = {}
         self.children: Dict[int, Set[int]] = {}
         self.cost: List[float] = []
+        self.final_path_node_id: Optional[int] = None
 
         self.path: List[Tuple[float, float]] = []
         self.current_path: List[Tuple[float, float]] = []
@@ -370,21 +371,17 @@ class VFRRTStar(VFRRTStarSkeleton):
             psi_new = float(psi_new)
             self.path_psi_values.append(psi_new)
             self.node_psi[new_id] = psi_new
-        print("******", self.path_psi_values)
         if new_id in self.node_psi:
             print(f"node {new_id} -> psi {self.node_psi[new_id]}")
         if not self.path_psi_values:
             self.heuristic_interval = (-np.inf, np.inf)
-            print(111111111111111111111111111111111)
             return self.path_psi_values
         if self.epsilon==1:
             self.heuristic_interval=(-np.inf, np.inf)
-            print(111111111111111111111111111111111)
         else:
             ke=self.epsilon/(1-self.epsilon)
             delta_psi=abs(self.path_psi_values[-1]-self.path_psi_values[0])
             self.heuristic_interval = (min(self.path_psi_values)-ke*delta_psi, max(self.path_psi_values)+ke*delta_psi)
-            print(222222222222222222222222222222222)
             print(self.node_psi)
         return self.path_psi_values
 
@@ -569,7 +566,7 @@ class VFRRTStar(VFRRTStarSkeleton):
             origin[1] + grid.shape[0] * res,
         ]
         ax.imshow(grid <= 50, cmap="gray", origin="lower", extent=extent, alpha=0.25)
-        ax.set_title("SVF-RRT* Live Tree Growth")
+        #ax.set_title("SVF-RRT* Live Tree Growth")
         ax.set_xlabel("X (m)")
         ax.set_ylabel("Y (m)")
         ax.grid(True, alpha=0.2)
@@ -753,13 +750,16 @@ class VFRRTStar(VFRRTStarSkeleton):
             self._debug_step(k, "rewire check complete")
 
             # goal check
-            if euclidean(q_new, goal) < self.goal_tolerance and self.collision_free(q_new, goal):
-                goal_id = len(self.nodes)
-                self.nodes.append(goal)
-                self.parent[goal_id] = new_id
-                self.children[goal_id] = set()
-                self.children[new_id].add(goal_id)
-                self.cost.append(self.cost[new_id] + self.edge_cost(q_new, goal))
+            if euclidean(q_new, goal) < self.goal_tolerance:
+                if self.collision_free(q_new, goal):
+                    goal_id = len(self.nodes)
+                    self.nodes.append(goal)
+                    self.parent[goal_id] = new_id
+                    self.children[goal_id] = set()
+                    self.children[new_id].add(goal_id)
+                    self.cost.append(self.cost[new_id] + self.edge_cost(q_new, goal))
+                else:
+                    goal_id = new_id
                 self.stats.reached_goal = True
                 self.stats.iterations = k + 1
                 self.stats.runtime_sec = time.time() - start_time
@@ -782,12 +782,28 @@ class VFRRTStar(VFRRTStarSkeleton):
         # fallback if not reached
         if goal_id is None:
             closest = min(range(len(self.nodes)), key=lambda i: euclidean(self.nodes[i], goal))
-            goal_id = closest
+            closest_dist = euclidean(self.nodes[closest], goal)
+            can_connect_goal = self.collision_free(self.nodes[closest], goal)
             self.stats.iterations = self.max_iter
             self.stats.runtime_sec = time.time() - start_time
-            print("⚠ Goal not reached exactly")
-            print(f"  Closest node distance to goal: {euclidean(self.nodes[closest], goal):.1f} m")
+            if closest_dist < self.goal_tolerance:
+                if can_connect_goal:
+                    goal_id = len(self.nodes)
+                    self.nodes.append(goal)
+                    self.parent[goal_id] = closest
+                    self.children[goal_id] = set()
+                    self.children[closest].add(goal_id)
+                    self.cost.append(self.cost[closest] + self.edge_cost(self.nodes[closest], goal))
+                else:
+                    goal_id = closest
+                self.stats.reached_goal = True
+                print(f"✓ Goal reached within tolerance ({self.stats.runtime_sec:.2f}s)")
+            else:
+                goal_id = closest
+                print("⚠ Goal not reached")
+                print(f"  Closest node distance to goal: {closest_dist:.1f} m")
 
+        self.final_path_node_id = goal_id
         self.path = self.extract_path(goal_id)
 
         if live_fig is not None:
@@ -854,7 +870,7 @@ def visualize_solution(
     ax.scatter(*goal, c="gold", s=300, marker="s", edgecolors="black", linewidth=2, label="Goal")
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Y (m)")
-    ax.set_title("VF-RRT* Path Planning (Refactored)")
+    #ax.set_title("SVF-RRT* Path Planning (Refactored)")
     ax.legend(loc="upper right")
     ax.grid(True, alpha=0.2)
     ax.set_xlim([extent[0], extent[1]])
@@ -879,7 +895,7 @@ def main() -> None:
     print(f"✓ Velocity lookup bounds: x=[{bounds[0]:.1f}, {bounds[1]:.1f}], y=[{bounds[2]:.1f}, {bounds[3]:.1f}]")
 
     start = (-400, 200)
-    goal = (300, 200)
+    goal = (-100, 280)
 
     planner = VFRRTStar(
         occupancy_grid=grid,
@@ -887,12 +903,12 @@ def main() -> None:
         resolution=resolution,
         interpolators=(u_interp, v_interp),
         # core planner
-        max_iter=5000,
-        step_size=20,
-        goal_sample_rate=0.0,
-        sample_checks=100,
+        max_iter=200,
+        step_size=10,
+        goal_sample_rate=0.05,
+        sample_checks=30,
         rewire_base_radius=200.0,
-        goal_tolerance=30.0,
+        goal_tolerance=5.0,
         log_every=100,
         # adaptive lambda tuning
         lambda_gain=1.0,
@@ -906,8 +922,8 @@ def main() -> None:
         use_field_magnitude_scaling=False,
         field_scale_m=1.0,
         # step-by-step debug
-        debug_step_by_step=True,
-        debug_pause_sec=0.1,
+        debug_step_by_step=False,
+        debug_pause_sec=0.0,
         debug_live_plot=True,
     )
 
@@ -915,11 +931,13 @@ def main() -> None:
 
     if len(planner.path) > 1:
         path_length = sum(euclidean(planner.path[i], planner.path[i + 1]) for i in range(len(planner.path) - 1))
+        final_upstream_cost = planner.cost[planner.final_path_node_id] if planner.final_path_node_id is not None else float("nan")
         print("\n" + "=" * 60)
-        print("VF-RRT* Results")
+        print("SVF-RRT* Results")
         print("=" * 60)
         print(f"✓ Path found with {len(planner.path)} waypoints")
         print(f"  Path length: {path_length:.1f} m")
+        print(f"  Final upstream cost: {final_upstream_cost:.3f}")
         print(f"  Tree nodes explored: {len(planner.nodes)}")
         print(f"  Ineffective extensions: {planner.stats.ineffective_extensions}")
         print(f"  Goal reached: {success}")

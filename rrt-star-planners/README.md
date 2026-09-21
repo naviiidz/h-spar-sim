@@ -35,7 +35,7 @@ These inputs are expected to be converted into the lookup tables used by the pla
 
 Generated planner outputs are stored under:
 
-`./lookup_tables/sydney_regatta/output`
+`./lookup_tables/{map_name}/output`
 
 This folder is created automatically by the planner scripts if it does not already exist.
 
@@ -48,6 +48,6 @@ This folder is created automatically by the planner scripts if it does not alrea
 
 ## Notes
 
-- The planner scripts read lookup data from `./lookup_tables/sydney_regatta`.
+- The planner scripts read lookup data from `./lookup_tables/{map_name}`.
 - The `output` subfolder is reserved for generated results.
 - If your data lives in a different location, update the path constants in the scripts before running them.
