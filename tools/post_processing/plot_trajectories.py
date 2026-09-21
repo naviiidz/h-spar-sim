@@ -20,6 +20,25 @@ import matplotlib.patheffects as patheffects
 from matplotlib import cbook
 import numpy as np
 import pandas as pd
+import argparse
+from matplotlib.quiver import Quiver
+from matplotlib.patches import FancyArrowPatch
+
+# Publication-style rc params for paper-ready figures
+matplotlib.rcParams.update(
+	{
+		"font.family": "serif",
+		"font.serif": ["Times New Roman", "DejaVu Serif"],
+		"font.size": 18,
+		"axes.titlesize": 22,
+		"axes.labelsize": 20,
+		"legend.fontsize": 18,
+		"xtick.labelsize": 16,
+		"ytick.labelsize": 16,
+		"lines.linewidth": 2.5,
+		"figure.dpi": 300,
+	}
+)
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -29,6 +48,8 @@ FALLBACK_VELOCITY_PICKLE = SCRIPT_DIR.parent / "vtu_converter" / "output" / "vel
 OUTPUT_DIR = SCRIPT_DIR / "outputs"
 OUTPUT_TRAJECTORIES_PATH = OUTPUT_DIR / "trajectories_over_velocity_vectors.svg"
 OUTPUT_WAYPOINTS_PATH = OUTPUT_DIR / "waypoints_over_velocity_vectors.svg"
+OUTPUT_VECTORS_PATH = OUTPUT_DIR / "velocity_vectors_only.svg"
+OCCUPANCY_COLOR = "#4a4a4a"  # neutral slate instead of brown
 ROI_X_LIMITS = (-420.0, -80.0)
 ROI_Y_LIMITS = (130.0, 300.0)
 
@@ -103,6 +124,22 @@ def load_stream_figure(pickle_path: Path):
 		return pickle.load(handle)
 
 
+def remove_velocity_vectors(figure) -> None:
+	"""Remove/quash common velocity-vector artists (quiver arrows, fancy arrows).
+
+	This lets callers load the same pickled figure but hide the velocity vectors
+	before overlaying trajectories/waypoints.
+	"""
+	for ax in getattr(figure, "axes", []):
+		for art in list(ax.get_children()):
+			try:
+				if isinstance(art, Quiver) or isinstance(art, FancyArrowPatch):
+					art.remove()
+			except Exception:
+				# Be conservative: ignore any removal errors.
+				pass
+
+
 def extract_stream_background(figure) -> tuple[np.ndarray, Optional[np.ndarray], tuple[float, float, float, float]]:
 	if not figure.axes:
 		raise ValueError("Stream-function pickle did not contain any axes.")
@@ -155,17 +192,28 @@ def build_trajectory(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
 
 def draw_background(ax, psi: np.ndarray, obstacle: Optional[np.ndarray], extent: tuple[float, float, float, float]):
 	masked_psi = np.ma.masked_invalid(psi)
-	bg = ax.imshow(masked_psi, origin="lower", extent=extent, cmap="turbo", aspect="equal")
+	bg = ax.imshow(masked_psi, origin="lower", extent=extent, cmap="viridis", aspect="equal")
 
 	if obstacle is not None:
-		ax.imshow(obstacle, origin="lower", extent=extent, cmap="gray", alpha=0.9, aspect="equal")
+		# Render occupancy/obstacle layer as a tinted RGBA overlay using OCCUPANCY_COLOR
+		try:
+			mask = np.isfinite(obstacle)
+			if mask.any():
+				rgba = mcolors.to_rgba(OCCUPANCY_COLOR, alpha=0.9)
+				colored = np.zeros((obstacle.shape[0], obstacle.shape[1], 4), dtype=float)
+				colored[..., :3] = rgba[:3]
+				colored[..., 3] = np.where(mask, rgba[3], 0.0)
+				ax.imshow(colored, origin="lower", extent=extent, aspect="equal")
+		except Exception:
+			# Fallback to grayscale if anything goes wrong
+			ax.imshow(obstacle, origin="lower", extent=extent, cmap="gray", alpha=0.9, aspect="equal")
 
 	if int(np.count_nonzero(np.isfinite(masked_psi))) > 10:
 		xs = np.linspace(extent[0], extent[1], psi.shape[1])
 		ys = np.linspace(extent[2], extent[3], psi.shape[0])
 		xx, yy = np.meshgrid(xs, ys)
 		try:
-			ax.contour(xx, yy, masked_psi, levels=24, colors="k", linewidths=0.35, alpha=0.5)
+			ax.contour(xx, yy, masked_psi, levels=20, colors="k", linewidths=0.4, alpha=0.6)
 		except Exception:
 			pass
 
@@ -183,7 +231,7 @@ def plot_goal_path(ax, df: pd.DataFrame, color: str, label: str) -> None:
 		x,
 		y,
 		linestyle="-",
-		linewidth=4.0,
+		linewidth=3.0,
 		color=color,
 		alpha=1.0,
 		label=label,
@@ -200,7 +248,7 @@ def plot_goal_path(ax, df: pd.DataFrame, color: str, label: str) -> None:
 	ax.scatter(
 		x[::markevery],
 		y[::markevery],
-		s=38,
+		s=48,
 		facecolors=color,
 		edgecolors=color,
 		linewidths=0.0,
@@ -209,8 +257,8 @@ def plot_goal_path(ax, df: pd.DataFrame, color: str, label: str) -> None:
 	)
 
 	# Unique markers for start/end
-	ax.scatter(x[0], y[0], color=color, marker="*", s=600, edgecolors=color, linewidths=0.0, zorder=12)
-	ax.scatter(x[-1], y[-1], color=color, marker="X", s=600, edgecolors=color, linewidths=0.0, zorder=12)
+	ax.scatter(x[0], y[0], color=color, marker="*", s=300, edgecolors=color, linewidths=0.0, zorder=12)
+	ax.scatter(x[-1], y[-1], color=color, marker="X", s=300, edgecolors=color, linewidths=0.0, zorder=12)
 
 
 def plot_trajectory(ax, df: pd.DataFrame, color: str, label: str) -> None:
@@ -219,7 +267,7 @@ def plot_trajectory(ax, df: pd.DataFrame, color: str, label: str) -> None:
 		x,
 		y,
 		linestyle="-",
-		linewidth=5,
+		linewidth=4,
 		color=color,
 		alpha=1.0,
 		label=label,
@@ -233,8 +281,8 @@ def plot_trajectory(ax, df: pd.DataFrame, color: str, label: str) -> None:
 	)
 
 	# Unique markers for start/end
-	ax.scatter(x[0], y[0], color=color, marker="*", s=600, edgecolors="white", linewidths=1.2, zorder=11)
-	ax.scatter(x[-1], y[-1], color=color, marker="X", s=600, edgecolors="white", linewidths=1.2, zorder=11)
+	ax.scatter(x[0], y[0], color=color, marker="*", s=300, edgecolors="white", linewidths=1.2, zorder=11)
+	ax.scatter(x[-1], y[-1], color=color, marker="X", s=300, edgecolors="white", linewidths=1.2, zorder=11)
 
 
 def annotate_panel(ax, title: str) -> None:
@@ -266,13 +314,14 @@ def resolve_velocity_pickle() -> Path:
 	return velocity_pickle
 
 
-def plot_trajectories_over_velocity(velocity_pickle: Path) -> None:
+def plot_trajectories_over_velocity(velocity_pickle: Path, hide_vectors: bool = False) -> None:
 	figure = load_stream_figure(velocity_pickle)
+	if hide_vectors:
+		remove_velocity_vectors(figure)
 
-	FIGURE_SIZE_INCHES = (8, 8)   # width, height
+	FIGURE_SIZE_INCHES = (9, 9)   # width, height
 	OUTPUT_DPI = 300
 
-	# Add this
 	figure.set_size_inches(*FIGURE_SIZE_INCHES)
 
 
@@ -288,19 +337,20 @@ def plot_trajectories_over_velocity(velocity_pickle: Path) -> None:
 		trajectory_df = load_csv(trajectory_path)
 		plot_trajectory(axis, trajectory_df, planner.color, planner.label)
 
-	axis.legend(loc="upper left", frameon=True, fontsize=20, framealpha=0.9)
-	figure.savefig(OUTPUT_TRAJECTORIES_PATH, dpi=180, bbox_inches="tight")
+	axis.legend(loc="upper left", frameon=True, fontsize=16, framealpha=0.9, edgecolor="0.15")
+	figure.savefig(OUTPUT_TRAJECTORIES_PATH, dpi=OUTPUT_DPI, bbox_inches="tight")
 	plt.close(figure)
 	print(f"Saved trajectories over velocity vectors to {OUTPUT_TRAJECTORIES_PATH}")
 
 
-def plot_waypoints_over_velocity(velocity_pickle: Path) -> None:
+def plot_waypoints_over_velocity(velocity_pickle: Path, hide_vectors: bool = False) -> None:
 	figure = load_stream_figure(velocity_pickle)
+	if hide_vectors:
+		remove_velocity_vectors(figure)
 
-	FIGURE_SIZE_INCHES = (8, 8)   # width, height
+	FIGURE_SIZE_INCHES = (9, 9)   # width, height
 	OUTPUT_DPI = 300
 
-	# Add this
 	figure.set_size_inches(*FIGURE_SIZE_INCHES)
 
 	if not getattr(figure, "axes", None):
@@ -317,17 +367,46 @@ def plot_waypoints_over_velocity(velocity_pickle: Path) -> None:
 		waypoint_df = load_csv(waypoint_path)
 		plot_goal_path(axis, waypoint_df, planner.color, planner.label)
 
-	axis.legend(loc="upper left", frameon=True, fontsize=20, framealpha=0.9)
-	figure.savefig(OUTPUT_WAYPOINTS_PATH, dpi=180, bbox_inches="tight")
+	axis.legend(loc="upper left", frameon=True, fontsize=16, framealpha=0.9, edgecolor="0.15")
+	figure.savefig(OUTPUT_WAYPOINTS_PATH, dpi=OUTPUT_DPI, bbox_inches="tight")
 	plt.close(figure)
 	print(f"Saved waypoints over velocity vectors to {OUTPUT_WAYPOINTS_PATH}")
 
 
+def save_velocity_vectors_figure(velocity_pickle: Path, output_path: Path, figsize: tuple[float, float] = (9, 9), dpi: int = 300) -> None:
+	"""Save the original velocity-vector figure (including arrows) to `output_path`.
+
+	This function loads the pickled figure and writes it out at a publication size.
+	"""
+	figure = load_stream_figure(velocity_pickle)
+	figure.set_size_inches(*figsize)
+	# Ensure velocity-only figure uses the same ROI ranges and axis styling
+	if getattr(figure, "axes", None):
+		axis = figure.axes[0]
+		try:
+			configure_velocity_overlay_axis(axis)
+		except Exception:
+			# If configuring fails, still save the figure unmodified
+			pass
+	# Ensure we do not remove any vector artists here.
+	figure.savefig(output_path, dpi=dpi, bbox_inches="tight")
+	plt.close(figure)
+	print(f"Saved velocity-only figure to {output_path}")
+
+
 def main() -> None:
+	parser = argparse.ArgumentParser()
+	parser.add_argument("--no-vectors", dest="no_vectors", action="store_true", help="Hide velocity vectors in the background figure")
+	args = parser.parse_args()
+
 	OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 	velocity_pickle = resolve_velocity_pickle()
-	plot_waypoints_over_velocity(velocity_pickle)
-	plot_trajectories_over_velocity(velocity_pickle)
+
+	# Always save the original velocity-vector figure (useful for paper panels).
+	save_velocity_vectors_figure(velocity_pickle, OUTPUT_VECTORS_PATH, figsize=(9, 9), dpi=300)
+
+	plot_waypoints_over_velocity(velocity_pickle, hide_vectors=args.no_vectors)
+	plot_trajectories_over_velocity(velocity_pickle, hide_vectors=args.no_vectors)
 
 
 if __name__ == "__main__":

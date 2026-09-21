@@ -85,6 +85,16 @@ The script looks for `tools/post_processing/data/velocity_vectors.pkl` first. Ge
 tools/vtu_converter/output/velocity_vectors.pkl
 ```
 
+## Lagrangian Particle Simulation
+
+The Lagrangian particle simulator lives under:
+
+```text
+lagrangian_sim/
+```
+
+See `lagrangian_sim/README.md` for usage and options.
+
 ## `trajectory_metrics.py`
 
 Computes metrics for one planner run from a robot trajectory CSV and a goal sequence CSV.

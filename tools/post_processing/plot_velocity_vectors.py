@@ -384,7 +384,11 @@ def plot_velocity_vectors(
 	quiver_u = direction[:, 0] * normalized_length * max_arrow_length
 	quiver_v = direction[:, 1] * normalized_length * max_arrow_length
 
-	fig, ax = plt.subplots(figsize=(14, 10))
+	# Publication-standard figure size and DPI
+	FIGURE_SIZE_INCHES = (9, 9)
+	OUTPUT_DPI = 300
+
+	fig, ax = plt.subplots(figsize=FIGURE_SIZE_INCHES)
 
 	# If we have an occupancy grid, display it beneath the vectors
 	if occ_grid is not None:
@@ -436,10 +440,12 @@ def plot_velocity_vectors(
 		pass
 
 	plt.tight_layout()
-	plt.savefig(output_png, dpi=150, bbox_inches="tight")
+	plt.savefig(output_png, dpi=OUTPUT_DPI, bbox_inches="tight")
 	print(f"Saved velocity vector figure to {output_png}")
 
 	if output_pkl is not None:
+		# Ensure the pickled figure has the publication size recorded
+		fig.set_size_inches(*FIGURE_SIZE_INCHES)
 		with open(output_pkl, "wb") as f:
 			pickle.dump(fig, f)
 		print(f"Saved figure object to {output_pkl}")
