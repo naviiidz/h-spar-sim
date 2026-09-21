@@ -40,7 +40,7 @@ class ParticleSamplingNode(Node):
         self.declare_parameter('pose_topic', '/wamv/simple_pose')
         self.declare_parameter(
             'csv_path',
-            str(Path('/home/navid/h-spar-sim/backend/lagrangian_sim/outputs/sydney_regatta/sydney_regatta_lagrangian_particle_trajectories.csv')),
+            str(Path('/home/navid/h-spar-sim/lagrangian_sim/outputs/sydney_regatta/sydney_regatta_lagrangian_particle_trajectories.csv')),
         )
         self.declare_parameter('sim_time_column', 'sim_tim')
         self.declare_parameter('fallback_time_column', 'time')
@@ -100,6 +100,7 @@ class ParticleSamplingNode(Node):
         self.csv_max_time = max(self.samples_by_time) if self.samples_by_time else 0.0
         self.last_reported_key: tuple[float, float, float, float] | None = None
         self.detection_records: dict[int, ParticleDetectionRecord] = {}
+        self.published_particle_ids: set[int] = set()
 
         # For estimating robot velocity between successive poses
         self.last_pose_x: Optional[float] = None
@@ -245,7 +246,7 @@ class ParticleSamplingNode(Node):
 
         if not samples:
             self.get_logger().debug(
-                f'No particle samples found for sim time {sim_time:.6f} '
+                f'No particle samples found for sim time {self.sim_clock:.6f} '
                 f'(lookup={lookup_time:.6f})'
             )
             return
@@ -354,7 +355,9 @@ class ParticleSamplingNode(Node):
             mesh_marker.color.a = 1.0
             mesh_marker.mesh_resource = self.mesh_resource
             mesh_marker.mesh_use_embedded_materials = True
-            mesh_marker.lifetime = Duration(sec=1, nanosec=0)
+            # Zero lifetime keeps the latest scene marker visible until it is
+            # explicitly replaced or deleted.
+            mesh_marker.lifetime = Duration(sec=0, nanosec=0)
             marker_array.markers.append(mesh_marker)
 
             for sample in samples:
@@ -385,8 +388,20 @@ class ParticleSamplingNode(Node):
                 m.color.b = 1.0
                 m.color.a = 0.8
 
-                m.lifetime = Duration(sec=1, nanosec=0)
+                # Keep particle markers visible when pose messages pause.
+                m.lifetime = Duration(sec=0, nanosec=0)
                 marker_array.markers.append(m)
+
+            current_particle_ids = {int(sample.particle_id) for sample in samples}
+            for particle_id in self.published_particle_ids - current_particle_ids:
+                delete_marker = Marker()
+                delete_marker.header.frame_id = 'map'
+                delete_marker.ns = 'particles'
+                delete_marker.id = particle_id
+                delete_marker.action = Marker.DELETE
+                marker_array.markers.append(delete_marker)
+
+            self.published_particle_ids = current_particle_ids
 
             self.marker_publisher.publish(marker_array)
 
