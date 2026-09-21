@@ -98,18 +98,15 @@ ros2 launch usv_planners dwa_planner.launch.py
 
 This launch file starts the `simple_dwa_planner` node and a `path_visualizer` node, with simulation time enabled by default and ROS topic remaps for `/odom`, `/cmd_vel`, and `/goal_pose`.
 
-### Step 4: Bridge Global and Local Planners (TODO)
+### Step 4: Bridge Global and Local Planners
 
 ```bash
 source ros2_ws/install/setup.bash
 ros2 run usv_planners sequential_goal_sender --preset rrt
 ```
 
-This script sends a preset sequence of navigation goals to the planner. Survey patrol presets are available at 0 degrees (`survey`), 45 degrees (`survey_45`), and 90 degrees (`survey_90`). The RRT-style presets include `rrt`, `vf-rrt`, and `svf-rrt`. Waypoints can also be loaded from a CSV file using `astar_wp_file`:
+This script sends a preset sequence of navigation goals to the planner. Survey patrol presets are available at 0 degrees (`survey`), 45 degrees (`survey_45`), and 90 degrees (`survey_90`). The RRT-style presets include `rrt`, `vf-rrt`, and `svf-rrt`.
 
-```bash
-ros2 run usv_planners sequential_goal_sender --preset astar_wp_file waypoints.csv
-```
 
 ### Step 5: Run Particle Sampling Mechanism
 
