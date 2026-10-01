@@ -132,7 +132,7 @@ This starts the particle sampling node, which generates and tracks particle-base
 
 ## License
 
-See LICENSE file in repository.
+This project is licensed under the [MIT License](LICENSE).
 
 
 
