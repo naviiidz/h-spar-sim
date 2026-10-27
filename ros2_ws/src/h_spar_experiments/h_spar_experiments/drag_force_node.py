@@ -162,7 +162,7 @@ class DragForceNode(Node):
         """Handle response from drag_query service."""
         try:
             response = future.result()
-            self.get_logger().info(f'Got drag response: fx={response.fx:.2f}, fy={response.fy:.2f}')
+            self.get_logger().debug(f'Got drag response: fx={response.fx:.2f}, fy={response.fy:.2f}')
 
             # Create wrench message
             wrench_msg = WrenchStamped()
@@ -181,7 +181,7 @@ class DragForceNode(Node):
 
             # Publish wrench
             self.wrench_publisher.publish(wrench_msg)
-            self.get_logger().info('Published wrench command')
+            self.get_logger().debug('Published wrench command')
 
         except Exception as e:
             self.get_logger().error(f'Drag query service failed: {e}')

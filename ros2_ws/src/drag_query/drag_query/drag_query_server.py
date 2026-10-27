@@ -164,7 +164,7 @@ class DragQueryServer(Node):
         Handle GetDragForce service request.
         Look up velocity field from HDF5 database, and calculate drag forces.
         """
-        self.get_logger().info(
+        self.get_logger().debug(
             f'Received request: timestamp={request.timestamp}, x={request.x}, y={request.y}, theta={request.theta}'
         )
         
@@ -185,7 +185,7 @@ class DragQueryServer(Node):
             response.fy = fy
             response.torque = torque
             
-            self.get_logger().info(
+            self.get_logger().debug(
                 f'Velocity at position: {velocity}, Drag forces: fx={fx:.4f}, fy={fy:.4f}, torque={torque:.4f}'
             )
             
