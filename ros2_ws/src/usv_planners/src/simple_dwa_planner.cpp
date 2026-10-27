@@ -36,12 +36,17 @@ public:
     this->declare_parameter("goal_distance_bias", config_.goal_distance_bias);
     this->declare_parameter("heading_bias", config_.heading_bias);
     this->declare_parameter("velocity_bias", config_.velocity_bias);
+    // Velocity estimate from TF: minimum sample spacing (s) and low-pass weight
+    this->declare_parameter("velocity_estimate_min_dt", 0.1);
+    this->declare_parameter("velocity_filter_alpha", 0.5);
 
     // Get parameters
     robot_frame_ = this->get_parameter("robot_frame").as_string();
     global_frame_ = this->get_parameter("global_frame").as_string();
     control_frequency_ = this->get_parameter("control_frequency").as_double();
     goal_tolerance_ = this->get_parameter("goal_tolerance").as_double();
+    velocity_estimate_min_dt_ = this->get_parameter("velocity_estimate_min_dt").as_double();
+    velocity_filter_alpha_ = this->get_parameter("velocity_filter_alpha").as_double();
 
     // Configure DWA
     config_.max_vel_x = this->get_parameter("max_vel_x").as_double();
@@ -130,7 +135,7 @@ private:
       robot_pose.pose.position.z = transform.transform.translation.z;
       robot_pose.pose.orientation = transform.transform.rotation;
 
-      
+      updateVelocityEstimate(rclcpp::Time(transform.header.stamp), robot_pose);
       return true;
     } catch (tf2::TransformException& ex) {
       RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 1000, 
@@ -139,6 +144,47 @@ private:
     }
   }
   
+  // Estimate surge speed and yaw rate by differencing TF poses. Uses the TF
+  // stamps so it is independent of this node's clock. Yaw rate is CCW-positive,
+  // the same convention as generateTrajectory().
+  void updateVelocityEstimate(
+    const rclcpp::Time& stamp, const geometry_msgs::msg::PoseStamped& pose)
+  {
+    double x = pose.pose.position.x;
+    double y = pose.pose.position.y;
+    double yaw = getYaw(pose.pose.orientation);
+
+    if (!has_last_vel_sample_ || stamp.get_clock_type() != last_vel_stamp_.get_clock_type()) {
+      last_vel_stamp_ = stamp;
+      last_vel_x_ = x;
+      last_vel_y_ = y;
+      last_vel_yaw_ = yaw;
+      has_last_vel_sample_ = true;
+      return;
+    }
+
+    double dt = (stamp - last_vel_stamp_).seconds();
+    if (dt < velocity_estimate_min_dt_) {
+      return;
+    }
+
+    // Project displacement onto the mean heading to get surge speed over ground
+    double mean_yaw = last_vel_yaw_ + 0.5 * normalizeAngle(yaw - last_vel_yaw_);
+    double dx = x - last_vel_x_;
+    double dy = y - last_vel_y_;
+    double raw_v = (dx * cos(mean_yaw) + dy * sin(mean_yaw)) / dt;
+    double raw_w = normalizeAngle(yaw - last_vel_yaw_) / dt;
+
+    double a = velocity_filter_alpha_;
+    current_vel_.linear.x = a * raw_v + (1.0 - a) * current_vel_.linear.x;
+    current_vel_.angular.z = a * raw_w + (1.0 - a) * current_vel_.angular.z;
+
+    last_vel_stamp_ = stamp;
+    last_vel_x_ = x;
+    last_vel_y_ = y;
+    last_vel_yaw_ = yaw;
+  }
+
   void controlCallback()
   {
     if (!has_goal_) {
@@ -151,11 +197,6 @@ private:
       RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "Could not get robot pose from TF");
       return;
     }
-    
-    // For velocity, we'll assume zero for now (could estimate from pose changes)
-    current_vel_.linear.x = 0.0;
-    current_vel_.angular.z = 0.0;
-    
     // Check if goal is reached
     double distance_to_goal = calculateDistance(current_pose_, goal_pose_);
     RCLCPP_DEBUG_THROTTLE(this->get_logger(), *this->get_clock(), 1000, 
@@ -419,6 +460,15 @@ private:
   geometry_msgs::msg::PoseStamped current_pose_;
   geometry_msgs::msg::PoseStamped goal_pose_;
   geometry_msgs::msg::Twist current_vel_;
+
+  // Velocity estimation state
+  bool has_last_vel_sample_ = false;
+  rclcpp::Time last_vel_stamp_;
+  double last_vel_x_ = 0.0;
+  double last_vel_y_ = 0.0;
+  double last_vel_yaw_ = 0.0;
+  double velocity_estimate_min_dt_ = 0.1;
+  double velocity_filter_alpha_ = 0.5;
 
   bool has_goal_ = false;
   
