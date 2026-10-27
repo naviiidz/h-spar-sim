@@ -2,7 +2,11 @@ float64 timestamp
 float64 x
 float64 y
 float64 theta
+# Vehicle velocity over ground, world frame (m/s)
+float64 vx
+float64 vy
 ---
+# Current-induced force on the hull, world frame (N)
 float64 fx
 float64 fy
 float64 torque

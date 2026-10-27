@@ -36,6 +36,8 @@ class DragForceNode(Node):
         # Must exceed 1 / command_timeout of ros_to_gazebo_wrench_bridge (0.5 s),
         # otherwise the bridge clears the wrench between commands.
         self.declare_parameter('publish_rate', 10.0)
+        # Low-pass weight for the boat velocity estimate (1.0 = no filtering)
+        self.declare_parameter('velocity_filter_alpha', 0.5)
 
         pose_topic = self.get_parameter('pose_topic').value
         wrench_topic = self.get_parameter('wrench_topic').value
@@ -84,7 +86,13 @@ class DragForceNode(Node):
         self.current_pose = None
         self.current_sim_time = None
         self.timestamp_period = int(self.get_parameter('timestamp_period').value)
+        self.velocity_filter_alpha = float(self.get_parameter('velocity_filter_alpha').value)
         self.last_request_time = self.get_clock().now()
+
+        # Boat velocity estimate (world frame), differenced over simulation time
+        self.boat_vx = 0.0
+        self.boat_vy = 0.0
+        self.last_vel_sample = None  # (sim_time, x, y)
 
         # Timer for publishing
         timer_period = 1.0 / publish_rate
@@ -116,6 +124,8 @@ class DragForceNode(Node):
         quat = self.current_pose.pose.orientation
         theta = self.quaternion_to_yaw(quat.x, quat.y, quat.z, quat.w)
 
+        self.update_velocity_estimate(self.current_sim_time, x, y)
+
         # Map simulation time into the available velocity-field window.
         timestamp = int(self.current_sim_time)
         if self.timestamp_period > 0:
@@ -125,6 +135,25 @@ class DragForceNode(Node):
         
         # Query drag forces
         self.query_drag_force(timestamp, x, y, theta)
+
+    def update_velocity_estimate(self, sim_time, x, y):
+        """Finite-difference the boat position over simulation time, low-pass filtered."""
+        if self.last_vel_sample is None:
+            self.last_vel_sample = (sim_time, x, y)
+            return
+
+        last_t, last_x, last_y = self.last_vel_sample
+        dt = sim_time - last_t
+        if dt <= 0.0:
+            # Simulation paused or /clock not advanced; keep previous estimate
+            return
+
+        raw_vx = (x - last_x) / dt
+        raw_vy = (y - last_y) / dt
+        a = self.velocity_filter_alpha
+        self.boat_vx = a * raw_vx + (1.0 - a) * self.boat_vx
+        self.boat_vy = a * raw_vy + (1.0 - a) * self.boat_vy
+        self.last_vel_sample = (sim_time, x, y)
 
     def quaternion_to_yaw(self, x, y, z, w):
         """Convert quaternion to yaw angle."""
@@ -153,6 +182,8 @@ class DragForceNode(Node):
         request.x = x
         request.y = y
         request.theta = theta
+        request.vx = self.boat_vx
+        request.vy = self.boat_vy
 
         # Async service call to avoid blocking the event loop
         future = self.drag_query_client.call_async(request)
@@ -169,9 +200,9 @@ class DragForceNode(Node):
             wrench_msg.header.stamp = self.get_clock().now().to_msg()
             wrench_msg.header.frame_id = 'wamv/base_link'
 
-            # Set forces from drag query response
-            wrench_msg.wrench.force.x = -response.fx
-            wrench_msg.wrench.force.y = -response.fy
+            # Response is already the force on the hull (world frame)
+            wrench_msg.wrench.force.x = response.fx
+            wrench_msg.wrench.force.y = response.fy
             wrench_msg.wrench.force.z = 0.0
 
             # Set torques (currently disabled in drag_query)

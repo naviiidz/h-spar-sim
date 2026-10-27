@@ -60,10 +60,11 @@ class DragQueryServer(Node):
             self.robot_width = config['robot_width']
             self.robot_length = config['robot_length']
             self.water_density = config['water_density']
-            self.cx = config.get('cx', 0.8)  # x-direction drag coefficient
-            self.cy = config.get('cy', 1.2)  # y-direction drag coefficient
-            self.Ax = config.get('Ax', 3.0)  # reference area in x-direction
-            self.Ay = config.get('Ay', 6.0)  # reference area in y-direction
+            # Hull damping coefficients (defaults match VRX WAM-V)
+            self.xU = config.get('xU', 100.0)
+            self.xUU = config.get('xUU', 150.0)
+            self.yV = config.get('yV', 100.0)
+            self.yVV = config.get('yVV', 100.0)
             self.get_logger().info(f'Loaded robot config: {config_file}')
         except Exception as e:
             self.get_logger().warn(f'Failed to load robot config ({config_file}): {e}, using defaults')
@@ -71,10 +72,13 @@ class DragQueryServer(Node):
             self.robot_width = 2.0
             self.robot_length = 3.0
             self.water_density = 1025.0
-            self.cx = 0.8
-            self.cy = 1.2
-            self.Ax = 3.0
-            self.Ay = 6.0
+            self.xU = 100.0
+            self.xUU = 150.0
+            self.yV = 100.0
+            self.yVV = 100.0
+        self.get_logger().info(
+            f'Hull damping: xU={self.xU}, xUU={self.xUU}, yV={self.yV}, yVV={self.yVV}'
+        )
 
     def get_velocity_at_position(self, timestamp, x, y, tolerance=0.5):
         """Query velocity field at a position for a given timestamp
@@ -125,32 +129,35 @@ class DragQueryServer(Node):
         
         return vel
 
-    def calculate_drag_force(self, velocity, robot_theta):
-        """Calculate drag force and torque based on water velocity and robot orientation
-        
-        Uses directional drag coefficients (cx, cy) and reference areas (Ax, Ay).
+    @staticmethod
+    def _damping(u, lin, quad):
+        """Damping magnitude D(u) = lin*u + quad*u*|u| (VRX applies -D(u))."""
+        return lin * u + quad * u * abs(u)
+
+    def calculate_drag_force(self, velocity, robot_theta, boat_vx, boat_vy):
+        """Current-induced force on the hull, world frame.
+
+        VRX already applies still-water damping -D(v_boat). Adding
+        D(v_boat) - D(v_boat - u_current) makes the net hull damping
+        -D(v_boat - u_current), i.e. damping on the velocity relative to the water.
         """
-        # velocity is in world frame [vx, vy]
-        # robot_theta is robot heading in radians
-        
-        # Transform velocity to robot body frame
         cos_theta = math.cos(robot_theta)
         sin_theta = math.sin(robot_theta)
-        
-        # Rotation matrix to transform from world to body frame
-        v_body_x = velocity[0] * cos_theta + velocity[1] * sin_theta
-        v_body_y = -velocity[0] * sin_theta + velocity[1] * cos_theta
-        
-        # Calculate drag forces in body frame using directional coefficients and areas
-        # Drag force is proportional to velocity squared and in opposite direction
-        
-        # Drag in x-direction (longitudinal)
-        drag_x = -0.5 * self.cx * self.water_density * self.Ax * v_body_x * abs(v_body_x)
-        
-        # Drag in y-direction (lateral)
-        drag_y = -0.5 * self.cy * self.water_density * self.Ay * v_body_y * abs(v_body_y)
-        
-        # Transform back to world frame
+
+        # World -> body frame for current and boat velocity
+        u_cx = velocity[0] * cos_theta + velocity[1] * sin_theta
+        u_cy = -velocity[0] * sin_theta + velocity[1] * cos_theta
+        v_bx = boat_vx * cos_theta + boat_vy * sin_theta
+        v_by = -boat_vx * sin_theta + boat_vy * cos_theta
+
+        # Velocity relative to the water, body frame
+        v_rx = v_bx - u_cx
+        v_ry = v_by - u_cy
+
+        drag_x = self._damping(v_bx, self.xU, self.xUU) - self._damping(v_rx, self.xU, self.xUU)
+        drag_y = self._damping(v_by, self.yV, self.yVV) - self._damping(v_ry, self.yV, self.yVV)
+
+        # Body -> world frame
         fx = drag_x * cos_theta - drag_y * sin_theta
         fy = drag_x * sin_theta + drag_y * cos_theta
         
@@ -165,7 +172,8 @@ class DragQueryServer(Node):
         Look up velocity field from HDF5 database, and calculate drag forces.
         """
         self.get_logger().debug(
-            f'Received request: timestamp={request.timestamp}, x={request.x}, y={request.y}, theta={request.theta}'
+            f'Received request: timestamp={request.timestamp}, x={request.x}, y={request.y}, '
+            f'theta={request.theta}, vx={request.vx}, vy={request.vy}'
         )
         
         try:
@@ -179,12 +187,14 @@ class DragQueryServer(Node):
                 return response
             
             # Calculate drag forces
-            fx, fy, torque = self.calculate_drag_force(velocity, request.theta)
-            
+            fx, fy, torque = self.calculate_drag_force(
+                velocity, request.theta, request.vx, request.vy
+            )
+
             response.fx = fx
             response.fy = fy
             response.torque = torque
-            
+
             self.get_logger().debug(
                 f'Velocity at position: {velocity}, Drag forces: fx={fx:.4f}, fy={fy:.4f}, torque={torque:.4f}'
             )
