@@ -6,6 +6,7 @@
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/buffer.h>
+#include <algorithm>
 #include <cmath>
 #include <vector>
 #include <limits>
@@ -240,6 +241,16 @@ private:
     double max_vel = std::min(config_.max_vel_x, current_vel_.linear.x + config_.acc_lim_x * dt);
     double min_yaw_rate = std::max(config_.min_vel_theta, current_vel_.angular.z - config_.acc_lim_theta * dt);
     double max_yaw_rate = std::min(config_.max_vel_theta, current_vel_.angular.z + config_.acc_lim_theta * dt);
+
+    // If the measured state is outside the limits (e.g. pushed backwards by a
+    // current), the window is empty; collapse it to the nearest allowed value.
+    if (min_vel > max_vel) {
+      min_vel = max_vel = std::clamp(current_vel_.linear.x, config_.min_vel_x, config_.max_vel_x);
+    }
+    if (min_yaw_rate > max_yaw_rate) {
+      min_yaw_rate = max_yaw_rate =
+        std::clamp(current_vel_.angular.z, config_.min_vel_theta, config_.max_vel_theta);
+    }
 
     // Sample velocities within dynamic window
     double vel_step = (max_vel - min_vel) / config_.vel_samples;
