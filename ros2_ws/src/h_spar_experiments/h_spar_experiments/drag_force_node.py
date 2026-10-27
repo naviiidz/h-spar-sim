@@ -33,7 +33,9 @@ class DragForceNode(Node):
         self.declare_parameter('drag_query_service', '/get_drag_force')
         self.declare_parameter('clock_topic', '/clock')
         self.declare_parameter('timestamp_period', 521.0)
-        self.declare_parameter('publish_rate', 1.0)
+        # Must exceed 1 / command_timeout of ros_to_gazebo_wrench_bridge (0.5 s),
+        # otherwise the bridge clears the wrench between commands.
+        self.declare_parameter('publish_rate', 10.0)
 
         pose_topic = self.get_parameter('pose_topic').value
         wrench_topic = self.get_parameter('wrench_topic').value
