@@ -26,6 +26,16 @@ public:
     this->declare_parameter("max_vel_x", 5.0);
     this->declare_parameter("max_vel_theta", 2.0);
     this->declare_parameter("sim_time", 3.0);
+    this->declare_parameter("min_vel_x", config_.min_vel_x);
+    this->declare_parameter("min_vel_theta", -this->get_parameter("max_vel_theta").as_double());
+    this->declare_parameter("acc_lim_x", config_.acc_lim_x);
+    this->declare_parameter("acc_lim_theta", config_.acc_lim_theta);
+    this->declare_parameter("sim_granularity", config_.sim_granularity);
+    this->declare_parameter("vx_samples", config_.vel_samples);
+    this->declare_parameter("vyaw_samples", config_.angular_samples);
+    this->declare_parameter("goal_distance_bias", config_.goal_distance_bias);
+    this->declare_parameter("heading_bias", config_.heading_bias);
+    this->declare_parameter("velocity_bias", config_.velocity_bias);
 
     // Get parameters
     robot_frame_ = this->get_parameter("robot_frame").as_string();
@@ -36,8 +46,17 @@ public:
     // Configure DWA
     config_.max_vel_x = this->get_parameter("max_vel_x").as_double();
     config_.max_vel_theta = this->get_parameter("max_vel_theta").as_double();
-    config_.min_vel_theta = -config_.max_vel_theta;
+    config_.min_vel_theta = this->get_parameter("min_vel_theta").as_double();
     config_.sim_time = this->get_parameter("sim_time").as_double();
+    config_.min_vel_x = this->get_parameter("min_vel_x").as_double();
+    config_.acc_lim_x = this->get_parameter("acc_lim_x").as_double();
+    config_.acc_lim_theta = this->get_parameter("acc_lim_theta").as_double();
+    config_.sim_granularity = this->get_parameter("sim_granularity").as_double();
+    config_.vel_samples = static_cast<int>(this->get_parameter("vx_samples").as_int());
+    config_.angular_samples = static_cast<int>(this->get_parameter("vyaw_samples").as_int());
+    config_.goal_distance_bias = this->get_parameter("goal_distance_bias").as_double();
+    config_.heading_bias = this->get_parameter("heading_bias").as_double();
+    config_.velocity_bias = this->get_parameter("velocity_bias").as_double();
     
     // Publishers
     cmd_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/wamv/cmd_vel", 1);
