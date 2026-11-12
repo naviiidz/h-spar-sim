@@ -26,6 +26,8 @@ public:
     this->declare_parameter<double>("command_timeout", 0.5);
     this->declare_parameter<double>("watchdog_rate", 20.0);
     this->declare_parameter<double>("zero_tolerance", 1e-9);
+    // Delay between clearing the old persistent wrench and publishing the new one
+    this->declare_parameter<double>("replace_delay", 0.01);
 
     world_name_ = this->get_parameter("world_name").as_string();
     link_name_ = this->get_parameter("link_name").as_string();
@@ -33,6 +35,7 @@ public:
     persistent_ = this->get_parameter("persistent").as_bool();
     command_timeout_ = this->get_parameter("command_timeout").as_double();
     zero_tolerance_ = this->get_parameter("zero_tolerance").as_double();
+    replace_delay_ = this->get_parameter("replace_delay").as_double();
 
     if (persistent_)
     {
@@ -121,15 +124,40 @@ private:
       return;
     }
 
-    publish_wrench(
-      ros_msg->wrench.force.x,
-      ros_msg->wrench.force.y,
-      ros_msg->wrench.force.z,
-      ros_msg->wrench.torque.x,
-      ros_msg->wrench.torque.y,
-      ros_msg->wrench.torque.z);
-
+    pending_wrench_ = ros_msg->wrench;
     command_active_ = true;
+
+    // Gazebo sums every persistent wrench on a link until a clear, so each
+    // command must replace the previous one. Gazebo applies the clear on its
+    // next step but stores a new wrench immediately, so publishing right after
+    // the clear would erase the new wrench too: wait replace_delay first.
+    if (persistent_ && !clear_sent_)
+    {
+      clear_wrench();
+      clear_sent_ = true;
+      publish_timer_ = this->create_wall_timer(
+        std::chrono::duration<double>(replace_delay_),
+        [this]()
+        {
+          publish_timer_->cancel();
+          publish_pending_wrench();
+        });
+      return;
+    }
+
+    publish_pending_wrench();
+  }
+
+  void publish_pending_wrench()
+  {
+    publish_wrench(
+      pending_wrench_.force.x,
+      pending_wrench_.force.y,
+      pending_wrench_.force.z,
+      pending_wrench_.torque.x,
+      pending_wrench_.torque.y,
+      pending_wrench_.torque.z);
+
     clear_sent_ = false;
   }
 
@@ -142,8 +170,12 @@ private:
 
     const double elapsed = (this->now() - last_command_time_).seconds();
 
-    if (elapsed > command_timeout_ && !clear_sent_)
+    if (elapsed > command_timeout_ && command_active_)
     {
+      if (publish_timer_)
+      {
+        publish_timer_->cancel();
+      }
       clear_wrench();
 
       RCLCPP_WARN(
@@ -192,6 +224,8 @@ private:
 
   rclcpp::Subscription<geometry_msgs::msg::WrenchStamped>::SharedPtr subscription_;
   rclcpp::TimerBase::SharedPtr watchdog_timer_;
+  rclcpp::TimerBase::SharedPtr publish_timer_;
+  geometry_msgs::msg::Wrench pending_wrench_;
 
   std::string world_name_;
   std::string link_name_;
@@ -205,6 +239,7 @@ private:
 
   double command_timeout_;
   double zero_tolerance_;
+  double replace_delay_;
 
   rclcpp::Time last_command_time_;
 };
