@@ -65,6 +65,7 @@ class DragQueryServer(Node):
             self.xUU = config.get('xUU', 150.0)
             self.yV = config.get('yV', 100.0)
             self.yVV = config.get('yVV', 100.0)
+            self.max_force = config.get('max_force', 10000.0)
             self.get_logger().info(f'Loaded robot config: {config_file}')
         except Exception as e:
             self.get_logger().warn(f'Failed to load robot config ({config_file}): {e}, using defaults')
@@ -76,8 +77,10 @@ class DragQueryServer(Node):
             self.xUU = 150.0
             self.yV = 100.0
             self.yVV = 100.0
+            self.max_force = 10000.0
         self.get_logger().info(
-            f'Hull damping: xU={self.xU}, xUU={self.xUU}, yV={self.yV}, yVV={self.yVV}'
+            f'Hull damping: xU={self.xU}, xUU={self.xUU}, yV={self.yV}, yVV={self.yVV}, '
+            f'max_force={self.max_force}'
         )
 
     def get_velocity_at_position(self, timestamp, x, y, tolerance=0.5):
@@ -134,33 +137,40 @@ class DragQueryServer(Node):
         """Damping magnitude D(u) = lin*u + quad*u*|u| (VRX applies -D(u))."""
         return lin * u + quad * u * abs(u)
 
-    def calculate_drag_force(self, velocity, robot_theta, boat_vx, boat_vy):
+    def calculate_drag_force(self, velocity, robot_theta):
         """Current-induced force on the hull, world frame.
 
-        VRX already applies still-water damping -D(v_boat). Adding
-        D(v_boat) - D(v_boat - u_current) makes the net hull damping
-        -D(v_boat - u_current), i.e. damping on the velocity relative to the water.
+        Returns D(u_current) per body axis. VRX applies still-water damping
+        -D(v_boat), so the boat drifts at equilibrium where D(v_boat) = D(u_current),
+        i.e. v_boat = u_current. The force deliberately does not depend on the boat
+        velocity: cancelling VRX damping with a delayed velocity estimate from this
+        10 Hz loop is unstable.
         """
         cos_theta = math.cos(robot_theta)
         sin_theta = math.sin(robot_theta)
 
-        # World -> body frame for current and boat velocity
+        # World -> body frame
         u_cx = velocity[0] * cos_theta + velocity[1] * sin_theta
         u_cy = -velocity[0] * sin_theta + velocity[1] * cos_theta
-        v_bx = boat_vx * cos_theta + boat_vy * sin_theta
-        v_by = -boat_vx * sin_theta + boat_vy * cos_theta
 
-        # Velocity relative to the water, body frame
-        v_rx = v_bx - u_cx
-        v_ry = v_by - u_cy
-
-        drag_x = self._damping(v_bx, self.xU, self.xUU) - self._damping(v_rx, self.xU, self.xUU)
-        drag_y = self._damping(v_by, self.yV, self.yVV) - self._damping(v_ry, self.yV, self.yVV)
+        drag_x = self._damping(u_cx, self.xU, self.xUU)
+        drag_y = self._damping(u_cy, self.yV, self.yVV)
 
         # Body -> world frame
         fx = drag_x * cos_theta - drag_y * sin_theta
         fy = drag_x * sin_theta + drag_y * cos_theta
-        
+
+        # Safety limit so a bad lookup cannot blow up the physics
+        magnitude = math.hypot(fx, fy)
+        if magnitude > self.max_force:
+            self.get_logger().warn(
+                f'Current force {magnitude:.0f} N exceeds max_force {self.max_force:.0f} N; clamping',
+                throttle_duration_sec=5.0,
+            )
+            scale = self.max_force / magnitude
+            fx *= scale
+            fy *= scale
+
         # Torque - ignored for now
         torque = 0.0
         
@@ -173,7 +183,7 @@ class DragQueryServer(Node):
         """
         self.get_logger().debug(
             f'Received request: timestamp={request.timestamp}, x={request.x}, y={request.y}, '
-            f'theta={request.theta}, vx={request.vx}, vy={request.vy}'
+            f'theta={request.theta}'
         )
         
         try:
@@ -187,9 +197,7 @@ class DragQueryServer(Node):
                 return response
             
             # Calculate drag forces
-            fx, fy, torque = self.calculate_drag_force(
-                velocity, request.theta, request.vx, request.vy
-            )
+            fx, fy, torque = self.calculate_drag_force(velocity, request.theta)
 
             response.fx = fx
             response.fy = fy

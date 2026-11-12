@@ -4,9 +4,12 @@ robot_length: 3.0  # meters - length of the robot
 water_density: 1025.0  # kg/m^3 - seawater density
 
 # Hull damping coefficients. Must match the vrx::SimpleHydrodynamics plugin
-# (vrx_urdf/wamv_gazebo/urdf/dynamics/wamv_gazebo_dynamics_plugin.xacro) so the
-# current force cancels VRX's still-water damping exactly.
+# (vrx_urdf/wamv_gazebo/urdf/dynamics/wamv_gazebo_dynamics_plugin.xacro) so a
+# boat drifting with the current settles at the current speed.
 xU: 100.0   # N/(m/s)      surge linear
 xUU: 150.0  # N/(m/s)^2    surge quadratic
 yV: 100.0   # N/(m/s)      sway linear
 yVV: 100.0  # N/(m/s)^2    sway quadratic
+
+# Safety limit on the current force magnitude (N)
+max_force: 10000.0
