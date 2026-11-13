@@ -25,4 +25,10 @@ install(PROGRAMS
   RENAME drag_force_node
 )
 
+# Install launch files
+install(DIRECTORY
+  launch
+  DESTINATION share/${PROJECT_NAME}
+)
+
 ament_package()
