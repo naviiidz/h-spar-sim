@@ -12,11 +12,12 @@ def generate_launch_description():
     usv_bringup = os.path.join(usv_control_share, 'launch', 'usv_bringup.launch.py')
 
     return LaunchDescription([
-        # Bridge node to send wrench commands from ROS to Gazebo
+        # Bridge the water current to VRX SimpleHydrodynamics in Gazebo
         Node(
-            package='h_spar_force',
-            executable='ros_to_gazebo_wrench_bridge',
-            name='ros_to_gazebo_wrench_bridge',
+            package='ros_gz_bridge',
+            executable='parameter_bridge',
+            name='water_current_bridge',
+            arguments=['/wamv/water_current@geometry_msgs/msg/Vector3]gz.msgs.Vector3d'],
             output='screen'
         ),
 
@@ -34,7 +35,7 @@ def generate_launch_description():
         ),
 
 
-        # Experimental node that queries drag and publishes wrench
+        # Experimental node that queries and publishes the water current
         Node(
             package='h_spar_experiments',
             executable='drag_force_node',

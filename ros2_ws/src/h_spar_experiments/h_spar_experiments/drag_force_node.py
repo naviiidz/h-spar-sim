@@ -2,22 +2,23 @@
 """
 Drag Force Query Node
 
-Subscribes to vehicle pose and queries the drag_query service to get hydrodynamic
-drag forces, then publishes them as wrench commands to Gazebo.
+Subscribes to vehicle pose, queries the drag_query service for the water current
+velocity at the vehicle, and publishes it for VRX SimpleHydrodynamics, which
+damps the velocity relative to the water (bridged to Gazebo).
 
 Subscriptions:
   - /wamv/simple_pose (geometry_msgs/PoseStamped): Vehicle pose
 
 Service Calls:
-  - /get_drag_force (drag_query/srv/GetDragForce): Query drag forces at current position
+  - /get_drag_force (drag_query/srv/GetDragForce): Query current velocity at the vehicle position
 
 Publications:
-  - /h_spar/wamv/wrench_cmd (geometry_msgs/WrenchStamped): Wrench command for Gazebo
+  - /wamv/water_current (geometry_msgs/Vector3): Current velocity, world frame (m/s)
 """
 
 import rclpy
 from rclpy.node import Node
-from geometry_msgs.msg import PoseStamped, WrenchStamped
+from geometry_msgs.msg import PoseStamped, Vector3
 from drag_query.srv import GetDragForce
 from rosgraph_msgs.msg import Clock
 import math
@@ -29,16 +30,16 @@ class DragForceNode(Node):
 
         # Parameters
         self.declare_parameter('pose_topic', '/wamv/simple_pose')
-        self.declare_parameter('wrench_topic', '/h_spar/wamv/wrench_cmd')
+        self.declare_parameter('current_topic', '/wamv/water_current')
         self.declare_parameter('drag_query_service', '/get_drag_force')
         self.declare_parameter('clock_topic', '/clock')
         self.declare_parameter('timestamp_period', 521.0)
-        # Must exceed 1 / command_timeout of ros_to_gazebo_wrench_bridge (0.5 s),
-        # otherwise the bridge clears the wrench between commands.
+        # SimpleHydrodynamics resets the current after 2 s of simulation time
+        # without messages
         self.declare_parameter('publish_rate', 10.0)
 
         pose_topic = self.get_parameter('pose_topic').value
-        wrench_topic = self.get_parameter('wrench_topic').value
+        current_topic = self.get_parameter('current_topic').value
         drag_query_service = self.get_parameter('drag_query_service').value
         clock_topic = self.get_parameter('clock_topic').value
         publish_rate = self.get_parameter('publish_rate').value
@@ -59,10 +60,10 @@ class DragForceNode(Node):
             10
         )
 
-        # Publisher for wrench
-        self.wrench_publisher = self.create_publisher(
-            WrenchStamped,
-            wrench_topic,
+        # Publisher for the current velocity
+        self.current_publisher = self.create_publisher(
+            Vector3,
+            current_topic,
             10
         )
 
@@ -77,7 +78,7 @@ class DragForceNode(Node):
 
         self.get_logger().info(
             f'Drag force node initialized. '
-            f'Pose: {pose_topic}, Wrench: {wrench_topic}'
+            f'Pose: {pose_topic}, Current: {current_topic}'
         )
 
         # State
@@ -99,7 +100,7 @@ class DragForceNode(Node):
         self.current_sim_time = float(msg.clock.sec) + float(msg.clock.nanosec) / 1e9
 
     def timer_callback(self):
-        """Periodically query drag forces and publish wrench."""
+        """Periodically query and publish the current velocity."""
         if self.current_pose is None:
             self.get_logger().debug('Waiting for pose...')
             return
@@ -123,7 +124,7 @@ class DragForceNode(Node):
 
         self.get_logger().debug(f'Timer called: timestamp={timestamp}, x={x:.2f}, y={y:.2f}, theta={theta:.2f}')
         
-        # Query drag forces
+        # Query the current velocity
         self.query_drag_force(timestamp, x, y, theta)
 
     def quaternion_to_yaw(self, x, y, z, w):
@@ -138,7 +139,7 @@ class DragForceNode(Node):
 
     def query_drag_force(self, timestamp, x, y, theta):
         """
-        Query the drag_query service for drag forces at the current position.
+        Query the drag_query service for the current velocity at the vehicle position.
 
         Args:
             timestamp: Time (seconds)
@@ -159,29 +160,16 @@ class DragForceNode(Node):
         future.add_done_callback(self.drag_force_response_callback)
 
     def drag_force_response_callback(self, future):
-        """Handle response from drag_query service."""
+        """Publish the current velocity from the drag_query response."""
         try:
             response = future.result()
-            self.get_logger().debug(f'Got drag response: fx={response.fx:.2f}, fy={response.fy:.2f}')
+            self.get_logger().debug(f'Got current: vx={response.vx:.2f}, vy={response.vy:.2f}')
 
-            # Create wrench message
-            wrench_msg = WrenchStamped()
-            wrench_msg.header.stamp = self.get_clock().now().to_msg()
-            wrench_msg.header.frame_id = 'wamv/base_link'
-
-            # Response is already the force on the hull (world frame)
-            wrench_msg.wrench.force.x = response.fx
-            wrench_msg.wrench.force.y = response.fy
-            wrench_msg.wrench.force.z = 0.0
-
-            # Set torques (currently disabled in drag_query)
-            wrench_msg.wrench.torque.x = 0.0
-            wrench_msg.wrench.torque.y = 0.0
-            wrench_msg.wrench.torque.z = response.torque
-
-            # Publish wrench
-            self.wrench_publisher.publish(wrench_msg)
-            self.get_logger().debug('Published wrench command')
+            current_msg = Vector3()
+            current_msg.x = response.vx
+            current_msg.y = response.vy
+            current_msg.z = 0.0
+            self.current_publisher.publish(current_msg)
 
         except Exception as e:
             self.get_logger().error(f'Drag query service failed: {e}')
