@@ -37,6 +37,14 @@ cd h-spar-sim
 Follow the official VRX installation guide:
 https://github.com/osrf/vrx
 
+H-SPAR needs a patched VRX in which the WAM-V hydrodynamic damping acts on
+the velocity relative to the water current. Clone it from the fork into the
+workspace:
+
+```bash
+git clone -b hspar-current https://github.com/naviiidz/vrx.git ros2_ws/src/vrx
+```
+
 ### 3. Build the Workspace
 
 ```bash
