@@ -6,6 +6,7 @@ import subprocess
 import threading
 import tf2_ros
 from geometry_msgs.msg import TransformStamped, PoseStamped
+from builtin_interfaces.msg import Time
 import math
 
 class GzDynamicPoseListener(Node):
@@ -94,6 +95,7 @@ class GzDynamicPoseListener(Node):
         
         # Parse poses from the message
         poses = self._parse_poses_from_message(message_text)
+        stamp = self._parse_stamp_from_message(message_text)
         
         # Filter for robot entities only - exact match for robot name
         robot_poses = []
@@ -118,14 +120,32 @@ class GzDynamicPoseListener(Node):
             #     self.get_logger().info("    Orientation: Not available, using identity quaternion")
             
             # Publish TF transform for the main robot
-            self._publish_wamv_tf(pos, ori)
+            self._publish_wamv_tf(pos, ori, stamp)
             
             # Publish pose topic for the main robot
-            self._publish_wamv_pose(pos, ori)
+            self._publish_wamv_pose(pos, ori, stamp)
         
         if len(robot_poses) == 0:
             self.get_logger().warn(f"⚠️  No robot entities with exact name '{self.robot_name}' found in this message!")
     
+    def _parse_stamp_from_message(self, message_text):
+        """Simulation time from the message header, or the node clock if missing"""
+        stamp = Time()
+        in_stamp = False
+        for line in message_text.split('\n'):
+            line = line.strip()
+            if line.startswith('stamp {'):
+                in_stamp = True
+            elif in_stamp and line.startswith('sec: '):
+                stamp.sec = int(line.split(': ')[1])
+            elif in_stamp and line.startswith('nsec: '):
+                stamp.nanosec = int(line.split(': ')[1])
+            elif in_stamp and line == '}':
+                return stamp
+            elif line.startswith('pose {'):
+                break
+        return self.get_clock().now().to_msg()
+
     def _parse_poses_from_message(self, message_text):
         """Simple parser for Gazebo pose messages"""
         poses = []
@@ -182,13 +202,13 @@ class GzDynamicPoseListener(Node):
         
         return poses
     
-    def _publish_wamv_tf(self, position, orientation):
+    def _publish_wamv_tf(self, position, orientation, stamp):
         """Publish TF transform for WAMV"""
         try:
             transform = TransformStamped()
             
             # Header
-            transform.header.stamp = self.get_clock().now().to_msg()
+            transform.header.stamp = stamp
             transform.header.frame_id = 'map'  # Parent frame
             transform.child_frame_id = 'wamv_simple'  # Child frame
             
@@ -209,13 +229,13 @@ class GzDynamicPoseListener(Node):
         except Exception as e:
             self.get_logger().error(f"Failed to publish TF: {e}")
     
-    def _publish_wamv_pose(self, position, orientation):
+    def _publish_wamv_pose(self, position, orientation, stamp):
         """Publish pose topic for WAMV"""
         try:
             pose_msg = PoseStamped()
             
             # Header
-            pose_msg.header.stamp = self.get_clock().now().to_msg()
+            pose_msg.header.stamp = stamp
             pose_msg.header.frame_id = 'map'  # Same frame as TF
             
             # Position
