@@ -9,7 +9,7 @@ A ROS2-based hydrodynamic simulation environment for autonomous surface vehicles
 This project simulates an autonomous surface vehicle in a water environment with:
 - **Gazebo simulation** - Physics-based 3D environment
 - **VRX framework** - Marine robotics simulation
-- **Drag force modeling** - Real-time hydrodynamic drag calculations from velocity field data
+- **Water current modeling** - Hydrodynamic damping relative to the local current from velocity field data
 - **ROS2 integration** - Full ROS2 middleware support for sensors, actuators, and control
 
 
@@ -61,14 +61,14 @@ source install/setup.bash
 - Applies forces and torques to the vehicle
 - Publishes sensor data and pose information
 
-**2. drag_query Service** - Hydrodynamic drag calculation
+**2. drag_query Service** - Water current lookup
 - Queries velocity field database (HDF5)
-- Calculates drag forces in x and y directions
-- Provides forces via ROS2 service interface
+- Returns the current velocity at the vehicle position (world frame)
+- Provides the current via ROS2 service interface
 
-**3. Wrench Bridge** - Force application interface
-- Bridges ROS2 drag force topics to Gazebo
-- Applies calculated forces to the simulated vehicle
+**3. Current Bridge** - Current input to Gazebo
+- Bridges `/wamv/water_current` from ROS2 to Gazebo
+- The patched VRX hydrodynamics plugin applies damping to the velocity relative to the water
 
 **4. USV Bringup** - Vehicle initialization
 - Publishes vehicle pose in Gazebo coordinates
@@ -93,10 +93,10 @@ ros2 launch h_spar_experiments experiment1.launch.py
 ```
 
 This launch file starts:
-- `ros_to_gazebo_wrench_bridge` to forward wrench commands into Gazebo
-- `drag_query_server` to provide hydrodynamic drag values
+- `ros_gz_bridge` to forward the water current into Gazebo
+- `drag_query_server` to provide the current velocity
 - `usv_bringup.launch.py` from `usv_control` for vehicle bringup
-- `drag_force_node` to query drag and publish wrench commands
+- `drag_force_node` to query the current and publish it on `/wamv/water_current`
 
 ### Step 3: Launch DWA planner
 
