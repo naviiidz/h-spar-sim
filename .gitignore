@@ -2,6 +2,9 @@
 ros2_ws/build/
 ros2_ws/install/
 ros2_ws/log/
+/build/
+/install/
+/log/
 ros2_ws/src/vrx/
 velocity_fields/
 rrt-star-planners/lookup_tables/
@@ -21,6 +24,14 @@ tools/post_processing/outputs/
 
 # Post-processing inputs (planner logs + pickles)
 tools/post_processing/data/
+
+# Experiment logs and simulation outputs
+ros2_ws/src/usv_planners/execution_log_*.csv
+ros2_ws/src/usv_planners/goal_sequence_*.csv
+ros2_ws/src/usv_planners/robot_trajectory_*.csv
+ros2_ws/src/usv_planners/state_*.csv
+ros2_ws/src/usv_planners/test1-output/
+lagrangian_sim/outputs/
 
 # Editor and OS files
 .DS_Store
