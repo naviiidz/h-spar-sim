@@ -38,7 +38,7 @@ import region as rg  # noqa: E402
 from build_mesh import read_msh_triangles  # noqa: E402
 
 STEPS = ["Map", "Draw region", "Boundaries", "Depth & settings", "Mesh & run"]
-EDGE_COLORS = {"wall": "#4d4d4d", "inflow": "#1a9850", "outflow": "#f46d43", "open": "#2166ac"}
+EDGE_COLORS = {"wall": "#4d4d4d", "inflow": "#1a9850", "inflow_open": "#66bd63", "outflow": "#f46d43", "open": "#2166ac"}
 PICK_PX = 10  # click tolerance in screen pixels
 SECONDS_PER_CELL_STEP = 1.25e-3  # measured: Sydney, 3640 triangles, 2 s step: ~4.5 s per step, one core
 
@@ -389,7 +389,7 @@ class App:
             except ValueError:
                 messagebox.showerror("Boundary conditions", "The value must be a number.")
                 return
-            if kind in ("inflow", "outflow") and value <= 0:
+            if kind in rg.SPEED_KINDS and value <= 0:
                 messagebox.showerror("Boundary conditions", "Speeds must be greater than 0.")
                 return
         for i in self.selected:
@@ -408,7 +408,7 @@ class App:
         self.tree.selection_set([str(i) for i in sorted(self.selected)])
         counts = {k: sum(e.kind == k for e in self.edges) for k in rg.EDGE_KINDS}
         txt = ", ".join(f"{n} {rg.EDGE_KINDS[k][0].lower()}" for k, n in counts.items() if n)
-        if not any(e.kind == "open" for e in self.edges) and any(e.kind != "wall" for e in self.edges):
+        if not any(e.kind in rg.LEVEL_KINDS for e in self.edges) and any(e.kind != "wall" for e in self.edges):
             txt += ("\n\nTip: with no open water-level edge, the water level can only stay steady if "
                     "inflow and outflow balance exactly. Usually at least one edge should be open.")
         self.bc_info.config(text=txt)
@@ -789,7 +789,7 @@ class App:
                 messagebox.showerror("Boundary conditions", "All edges are shore. Set at least one edge "
                                                             "to inflow, outflow or open water level.")
                 return
-            if not any(e.kind == "open" for e in self.edges) and not messagebox.askyesno(
+            if not any(e.kind in rg.LEVEL_KINDS for e in self.edges) and not messagebox.askyesno(
                     "No open edge", "No edge has an open water level, so the water level will drift unless "
                                     "inflow and outflow balance exactly. Continue anyway?"):
                 return

@@ -19,10 +19,13 @@ SURFACE_ID = 1000  # gmsh physical surface tag of the water domain
 EDGE_KINDS = {
     "wall": ("Shore / wall", "no flow through the edge", None),
     "inflow": ("Inflow", "water enters at this speed", "m/s"),
+    "inflow_open": ("Inflow, waves pass out", "inflow, level held at 0 so waves can leave", "m/s"),
     "outflow": ("Outflow", "water leaves at this speed", "m/s"),
     "open": ("Open water level", "water level held at this elevation", "m"),
 }
-DEFAULT_VALUES = {"wall": 0.0, "inflow": 1.0, "outflow": 1.0, "open": 0.0}
+DEFAULT_VALUES = {"wall": 0.0, "inflow": 1.0, "inflow_open": 1.0, "outflow": 1.0, "open": 0.0}
+SPEED_KINDS = ("inflow", "inflow_open", "outflow")  # edges whose value is a speed (> 0)
+LEVEL_KINDS = ("open", "inflow_open")              # edges that hold the water level
 NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
@@ -42,6 +45,8 @@ class SimSettings:
     ramp_s: float = 300.0
     viscosity_m2s: float = 1.0
     manning_n: float = 0.0
+    inflow_variation: float = 0.0     # inflow/outflow speeds vary by ± this fraction (0 = steady)
+    variation_period_s: float = 600.0  # period of that variation
 
     # (attribute, label, minimum allowed value, must be > minimum)
     FIELDS = (
@@ -53,6 +58,8 @@ class SimSettings:
         ("ramp_s", "Boundary ramp-up (s)", 0.0, False),
         ("viscosity_m2s", "Viscosity (m²/s)", 0.0, False),
         ("manning_n", "Manning bed friction (0 = off)", 0.0, False),
+        ("inflow_variation", "Inflow speed variation (± fraction, 0 = steady)", 0.0, False),
+        ("variation_period_s", "Variation period (s)", 0.0, True),
     )
 
 
@@ -125,12 +132,14 @@ class Region:
         for e in self.edges:
             if e.kind not in EDGE_KINDS:
                 out.append(f"Unknown boundary type '{e.kind}'.")
-            elif e.kind in ("inflow", "outflow") and e.value <= 0:
+            elif e.kind in SPEED_KINDS and e.value <= 0:
                 out.append("Inflow/outflow speeds must be greater than 0.")
         for attr, label, lo, strict in SimSettings.FIELDS:
             v = getattr(self.sim, attr)
             if (v <= lo) if strict else (v < lo):
                 out.append(f"{label} must be {'>' if strict else '>='} {lo:g}.")
+        if self.sim.inflow_variation >= 1.0:
+            out.append("The inflow speed variation must be below 1 (100 %).")
         if not export_fits_timestep(self.sim):
             out.append("'Save every' must be a whole multiple of the solver time step.")
         return out

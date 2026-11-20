@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from region import Region  # noqa: E402
+from region import SPEED_KINDS, Region  # noqa: E402
 
 TOOL_MARKER = "region.json"  # present in fields_dir only when this tool made it
 
@@ -95,20 +95,26 @@ def run(region: Region, overwrite: bool):
     o.horizontal_viscosity = Constant(s.viscosity_m2s)
     if s.manning_n > 0:
         o.manning_drag_coefficient = Constant(s.manning_n)
-    speeds = [e.value for e in region.edges if e.kind in ("inflow", "outflow")]
-    o.horizontal_velocity_scale = Constant(max(speeds + [0.5]))
+    speeds = [e.value for e in region.edges if e.kind in SPEED_KINDS]
+    o.horizontal_velocity_scale = Constant(max(speeds + [0.5]) * (1.0 + s.inflow_variation))
 
     # Boundary values ramp from 0 to full over ramp_s to avoid a start-up shock.
     ramp = Constant(1.0 if s.ramp_s <= 0 else 0.0)
+    # Speeds also follow the slow variation: factor = ramp(t) * (1 + a sin(2 pi t / P)).
+    speed = Constant(1.0 if s.ramp_s <= 0 else 0.0)
     bnd = {}
     for i, e in enumerate(region.edges):
         tag = i + 1
         if e.kind == "wall":
             bnd[tag] = {"un": Constant(0.0)}
         elif e.kind == "inflow":    # Thetis 'un' is positive OUT of the domain
-            bnd[tag] = {"un": Constant(-e.value) * ramp}
+            bnd[tag] = {"un": Constant(-e.value) * speed}
+        elif e.kind == "inflow_open":
+            # Level and velocity both given: the Riemann flux takes the incoming part from
+            # these values and lets waves from inside leave (no trapped sloshing).
+            bnd[tag] = {"elev": Constant(0.0), "un": Constant(-e.value) * speed}
         elif e.kind == "outflow":
-            bnd[tag] = {"un": Constant(e.value) * ramp}
+            bnd[tag] = {"un": Constant(e.value) * speed}
         elif e.kind == "open":
             bnd[tag] = {"elev": Constant(e.value) * ramp}
     solver.bnd_functions["shallow_water"] = bnd
@@ -125,8 +131,9 @@ def run(region: Region, overwrite: bool):
     count = {"n": 0}
 
     def update_forcings(t):
-        if s.ramp_s > 0:
-            ramp.assign(min(1.0, t / s.ramp_s))
+        r = min(1.0, t / s.ramp_s) if s.ramp_s > 0 else 1.0
+        ramp.assign(r)
+        speed.assign(r * (1.0 + s.inflow_variation * math.sin(2.0 * math.pi * t / s.variation_period_s)))
 
     def on_export():
         count["n"] += 1
