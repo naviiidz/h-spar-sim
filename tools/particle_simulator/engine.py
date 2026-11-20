@@ -10,6 +10,8 @@ from __future__ import annotations
 import csv
 import json
 import math
+import os
+import shutil
 import sys
 import threading
 from dataclasses import asdict, dataclass
@@ -68,6 +70,14 @@ def default_field_dt(name: str, times: np.ndarray) -> float:
     if len(d) and d[0] > 0 and np.allclose(d, d[0]):
         return float(d[0])
     return 1.0
+
+
+def _cropped_from(name: str) -> dict | None:
+    path = FIELDS_DIR / name / "region.json"
+    try:
+        return json.loads(path.read_text()).get("cropped_from") if path.is_file() else None
+    except (OSError, ValueError):
+        return None
 
 
 @dataclass
@@ -156,6 +166,7 @@ class Field:
         self.field_dt = float(field_dt or default_field_dt(name, times))
         self.geometry, self._first = lsim.load_geometry(self.files[0])
         self.ramp_s = float(field_info(name).get("ramp_s", 0.0))
+        self.cropped_from = _cropped_from(name)  # set for fields written by crop()
         self.edges = self._split_by_flow(boundary_edges(self.geometry.triangulation))
 
     @property
@@ -204,15 +215,76 @@ class Field:
             out[i] = float((un * seg_len).sum() / max(seg_len.sum(), 1e-12))
         return out
 
-    def spin_up(self, series, samples: int = 60, level: float = 0.95) -> tuple[np.ndarray, np.ndarray, float]:
-        """Mean speed over time and the time it first reaches `level` of its later value."""
-        t = np.linspace(0.0, self.duration, min(samples, len(self.files)))
+    def spin_up(self, series, max_samples: int = 600, tol: float = 0.02) -> "SpinUp":
+        """When the flow has settled after the start from rest.
+
+        The domain-mean speed is sampled over the whole field. Its settled level is
+        the mean over the last 30 % of the record. The spin-up ends at the first time
+        after which the mean speed stays within `tol` of that level for the rest of
+        the record (never before the boundary ramp-up ends). If the settled flow
+        itself varies by more than `tol`, the band is widened to that variation.
+        """
+        n = int(min(max_samples, len(self.files)))
+        t = np.linspace(0.0, self.duration, n)
         speed = np.array([np.nanmean(np.linalg.norm(series.velocity(self.geometry.xy, ti)[0], axis=1)) for ti in t])
-        later = np.median(speed[int(0.7 * len(speed)):]) if len(speed) else 0.0
-        reached = np.flatnonzero(speed >= level * later)
-        t_spin = float(t[reached[0]]) if len(reached) and later > 0 else 0.0
+        tail = speed[int(0.7 * n):]
+        level = float(np.mean(tail)) if len(tail) else 0.0
+        if level <= 0 or self.cropped_from:  # nothing to detect, or already cropped
+            return SpinUp(t, speed, level, tol, 0.0)
+        band = max(tol, 1.1 * float(np.max(np.abs(tail - level))) / level)
+        outside = np.flatnonzero(np.abs(speed - level) > band * level)
+        t_spin = float(t[min(outside[-1] + 1, n - 1)]) if len(outside) else 0.0
         t_spin = math.ceil(max(t_spin, self.ramp_s) / self.field_dt - 1e-9) * self.field_dt
-        return t, speed, t_spin
+        return SpinUp(t, speed, level, band, min(t_spin, self.duration))
+
+    def crop(self, t_start: float, name: str | None = None) -> Path:
+        """Write a new field that starts at field time t_start (e.g. after the spin-up).
+
+        Snapshots before t_start are dropped and the rest renumbered from 0, so every
+        reader (particle simulator, Gazebo current, vtu_converter) starts after the
+        spin-up. The .vtu files are hard links to the originals (no extra disk space;
+        copies if links are not possible). Returns the new field directory.
+        """
+        k0 = int(round(t_start / self.field_dt))
+        if not 0 < k0 < len(self.files) - 1:
+            raise ValueError(f"crop time must be between {self.field_dt:g} and {self.duration - self.field_dt:g} s")
+        name = name or f"{self.name}_from{k0 * self.field_dt:g}s"
+        out = FIELDS_DIR / name
+        if out.exists():
+            raise FileExistsError(f"{out} already exists")
+        vtu_dir = out / "raw" / "Velocity2d"
+        vtu_dir.mkdir(parents=True)
+        lines = ['<?xml version="1.0" ?>',
+                 '<VTKFile type="Collection" version="0.1" byte_order="LittleEndian">', "<Collection>"]
+        for k, src in enumerate(self.files[k0:]):
+            dst = vtu_dir / f"Velocity2d_{k}.vtu"
+            try:
+                os.link(src, dst)
+            except OSError:
+                shutil.copy2(src, dst)
+            lines.append(f'<DataSet timestep="{k * self.field_dt:g}" file="Velocity2d/{dst.name}" />')
+        lines += ["</Collection>", "</VTKFile>", ""]
+        (out / "raw" / "Velocity2d.pvd").write_text("\n".join(lines))
+        src_info = FIELDS_DIR / self.name / "region.json"
+        info = json.loads(src_info.read_text()) if src_info.is_file() else {"sim": {}}
+        info.setdefault("sim", {})
+        info["sim"]["export_interval_s"] = self.field_dt
+        info["sim"]["ramp_s"] = 0.0
+        info["output_name"] = name
+        info["cropped_from"] = {"field": self.name, "start_s": k0 * self.field_dt,
+                                "note": "snapshot k of this field = snapshot k + "
+                                        f"{k0} of {self.name}"}
+        (out / "region.json").write_text(json.dumps(info, indent=2))
+        return out
+
+
+@dataclass
+class SpinUp:
+    t: np.ndarray       # sample times (s)
+    speed: np.ndarray   # domain-mean speed (m/s)
+    level: float        # settled mean speed (mean of the last 30 %)
+    band: float         # relative band the speed stays within after t_spin
+    t_spin: float       # end of the spin-up (s, a whole number of snapshots)
 
 
 @dataclass

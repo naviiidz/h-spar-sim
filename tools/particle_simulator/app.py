@@ -183,6 +183,9 @@ class App:
 
     def _field_ready(self, fld: en.Field):
         self.field, self.series = fld, fld.new_series()
+        self.spin, self.t_spin = None, 0.0
+        self._draw_spin_plot()
+        self.crop_desc.config(text="")
         self.selected = {i for i, e in enumerate(fld.edges) if e.kind == "inflow"}
         self.sim = None
         g = fld.geometry
@@ -205,17 +208,25 @@ class App:
         self.next_btn.state(["!disabled"])
         self.status.set(f"Loaded {fld.name}. Press Next to choose the spawn edge.")
 
-    def _spin_up_ready(self, result):
-        t, speed, t_spin = result
+    def _spin_up_ready(self, result: en.SpinUp):
         if self.field is None:
             return
-        txt = (f"Mean speed starts at {speed[0]:.2f} m/s and reaches 95% of its later level "
-               f"({np.median(speed[int(0.7 * len(speed)):]):.2f} m/s) at about t = {t_spin:g} s.")
-        if t_spin > 0:
-            txt += " Earlier snapshots are the spin-up from rest; the particle start time is set after it."
+        self.spin = result
+        t_spin = result.t_spin
+        txt = (f"Mean speed starts at {result.speed[0]:.2f} m/s and settles at {result.level:.2f} m/s; "
+               f"it stays within ±{100 * result.band:.1f}% of that from t = {t_spin:g} s.")
+        if self.field.cropped_from:
+            c = self.field.cropped_from
+            txt = (f"This field is {c['field']} from t = {c['start_s']:g} s on (spin-up already cropped). "
+                   f"Mean speed {result.level:.2f} m/s.")
+        elif t_spin > 0:
+            txt += (" Earlier snapshots are the spin-up from rest: the particle start time is set after "
+                    "it, and step 4 can write a copy of the field without it.")
         self.spin_desc.config(text=txt)
         self.t_spin = t_spin
         self.vars["field_start_s"].set(f"{t_spin:g}")
+        self.crop_var.set(f"{t_spin:g}")
+        self._draw_spin_plot()
 
     # ---------------------------------------------------------------- step 2
     def _panel_edges(self):
@@ -385,7 +396,74 @@ class App:
         self.frame_desc = ttk.Label(f, foreground="#555", justify=tk.LEFT)
         self.frame_desc.pack(anchor="w", pady=6)
         ttk.Button(f, text="Open output folder", command=self.open_output).pack(fill=tk.X, pady=(10, 0))
+
+        ttk.Separator(f).pack(fill=tk.X, pady=10)
+        ttk.Label(f, text="Crop the spin-up from the field").pack(anchor="w")
+        ttk.Label(f, wraplength=370, justify=tk.LEFT, foreground="#555", text=(
+            "Writes a new field that starts at the chosen time, renumbered from 0, so the particle "
+            "simulator and the Gazebo current both start after the spin-up. Snapshots are hard links "
+            "(no extra disk space).")).pack(anchor="w")
+        self.spin_fig = Figure(figsize=(3.8, 1.5), dpi=90)
+        self.spin_ax = self.spin_fig.add_axes((0.16, 0.30, 0.80, 0.62))
+        self.spin_canvas = FigureCanvasTkAgg(self.spin_fig, master=f)
+        self.spin_canvas.get_tk_widget().pack(fill=tk.X, pady=4)
+        row = ttk.Frame(f)
+        row.pack(fill=tk.X)
+        ttk.Label(row, text="Start the new field at t (s)").pack(side=tk.LEFT)
+        self.crop_var = tk.StringVar(value="0")
+        self.crop_var.trace_add("write", lambda *_: self._draw_spin_plot())
+        ttk.Entry(row, textvariable=self.crop_var, width=8).pack(side=tk.RIGHT)
+        ttk.Button(f, text="Write cropped field", command=self.crop_field).pack(fill=tk.X, pady=6)
+        self.crop_desc = ttk.Label(f, wraplength=370, justify=tk.LEFT, foreground="#555")
+        self.crop_desc.pack(anchor="w")
         return f
+
+    def _draw_spin_plot(self):
+        ax = self.spin_ax
+        ax.clear()
+        sp = getattr(self, "spin", None)
+        if sp is None or self.field is None:
+            ax.text(0.5, 0.5, "spin-up not computed yet", ha="center", va="center",
+                    transform=ax.transAxes, fontsize=8, color="#999")
+            ax.set_axis_off()
+        else:
+            ax.set_axis_on()
+            ax.plot(sp.t, sp.speed, color="#1f6fae", lw=1)
+            ax.axhspan(sp.level * (1 - sp.band), sp.level * (1 + sp.band), color="#1f6fae", alpha=0.12, lw=0)
+            try:
+                tc = float(self.crop_var.get())
+                ax.axvline(tc, color="#c0392b", lw=1)
+                ax.axvspan(0, tc, color="#999", alpha=0.15, lw=0)
+            except ValueError:
+                pass
+            ax.set_xlim(0, self.field.duration)
+            ax.set_xlabel("field time (s)", fontsize=7)
+            ax.set_ylabel("mean speed\n(m/s)", fontsize=7)
+            ax.tick_params(labelsize=7)
+        self.spin_canvas.draw_idle()
+
+    def crop_field(self):
+        if self.field is None:
+            return
+        try:
+            tc = float(self.crop_var.get())
+        except ValueError:
+            messagebox.showerror("Crop", "Enter the start time in seconds.")
+            return
+        name = f"{self.field.name}_from{round(tc / self.field.field_dt) * self.field.field_dt:g}s"
+        if not messagebox.askyesno("Crop the spin-up",
+                                   f"Write velocity_fields/{name} with the snapshots from t = {tc:g} s on?"):
+            return
+        try:
+            out = self.field.crop(tc, name)
+        except Exception as exc:  # shown to the user
+            messagebox.showerror("Crop", str(exc))
+            return
+        n = len(list((out / "raw" / "Velocity2d").glob("*.vtu")))
+        self.crop_desc.config(text=f"Wrote {out.name}: {n} snapshots, t = 0 is t = {tc:g} s of {self.field.name}.\n"
+                                   "Load it in step 1 for particles, and point vtu_converter at its "
+                                   "raw/Velocity2d for the Gazebo current.")
+        self.status.set(f"Wrote {out}")
 
     def run_sim(self):
         if self.sim_thread and self.sim_thread.is_alive():

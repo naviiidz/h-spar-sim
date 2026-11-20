@@ -25,7 +25,7 @@ Needs only `numpy`, `matplotlib` (with Tk) and the repository's `lagrangian_sim`
 | 1 Velocity field | Pick a field under `velocity_fields/<name>/raw` and press Load. The snapshot interval comes from the flow generator's `region.json`, else from `Velocity2d.pvd`; you can override it. The slider shows the flow at any time. The tool also finds the end of the spin-up from rest and starts particles after it. |
 | 2 Spawn edge | The mesh boundary is split into edges at corners and where the flow through it changes. Edges with water flowing in are green, out orange, shore grey. Inflow edges are selected to start with; click to choose others (Shift-click for several). |
 | 3 Release & settings | Particles per release, release interval, placement along the edge (even or random), start distance from the edge, simulated time, time step, diffusivity, field start time, random seed and CSV stride. The black dots on the map show one release. |
-| 4 Run & view | Run writes the CSV while the particles are shown live. Afterwards, play back at 1–60× or drag the slider. Particles are coloured by release. |
+| 4 Run & view | Run writes the CSV while the particles are shown live. Afterwards, play back at 1–60× or drag the slider. Particles are coloured by release. **Crop the spin-up** writes `velocity_fields/<name>_from<T>s`, a copy of the field that starts at the chosen time and is renumbered from 0 (hard links, no extra disk space), so the particle simulator and the Gazebo current both start after the spin-up. The suggested time is where the domain-mean speed stays within a band around its settled level (mean of the last 30 %). |
 
 ## Output
 
