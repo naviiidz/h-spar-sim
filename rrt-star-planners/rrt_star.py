@@ -60,8 +60,8 @@ class RRTStar:
         # Rejection-sample inside the experiment ROI until the point is in free space.
         for _ in range(500):
             point = (
-                float(np.random.uniform(-600, 500)),
-                float(np.random.uniform(150, 300)),
+                float(np.random.uniform(self.world_x_min, self.world_x_max)),
+                float(np.random.uniform(self.world_y_min, self.world_y_max)),
             )
             if self.is_free_state(point):
                 return point
@@ -228,8 +228,8 @@ class RRTStar:
 # MAIN: Load occupancy grid and run RRT*
 # ============================================================
 
-output_dir = './lookup_tables/sydney_regatta/output'
-LOOKUP_FOLDER = './lookup_tables/sydney_regatta'
+import planner_args  # noqa: E402
+LOOKUP_FOLDER, output_dir, SUFFIX = planner_args.parse()
 
 # Ensure output directory exists
 os.makedirs(output_dir, exist_ok=True)
@@ -329,7 +329,7 @@ goal = (-100, 280)
 
 
 # Run RRT*
-rrt = RRTStar(grid, origin, resolution, max_iter=1000, step_size=20, goal_sample_rate=0.05)
+rrt = RRTStar(grid, origin, resolution, max_iter=planner_args.max_iter(1000), step_size=20, goal_sample_rate=0.05)
 success = rrt.plan(start, goal)
 
 # Print results
@@ -347,7 +347,7 @@ else:
     print("✗ No path found")
 
 if len(rrt.path) > 0:
-    trajectory_path = f"{output_dir}/rrt_waypoints.csv"
+    trajectory_path = f"{output_dir}/rrt_waypoints{SUFFIX}.csv"
     save_trajectory_csv(rrt.path, trajectory_path)
     print(f"✓ Trajectory saved: {trajectory_path}")
 
@@ -418,7 +418,7 @@ if len(rrt.path) > 1:
         print(f"Total upstream path cost: {total_upstream:.3f}")
         # save CSV
         try:
-            with open(f"{output_dir}/upstream_edge_costs.csv", 'w') as f:
+            with open(f"{output_dir}/upstream_edge_costs{SUFFIX}.csv", 'w') as f:
                 f.write("x1,y1,x2,y2,cost\n")
                 for r in costs:
                     f.write(f"{r[0]:.6f},{r[1]:.6f},{r[2]:.6f},{r[3]:.6f},{r[4]:.6f}\n")
@@ -441,7 +441,7 @@ ax.set_xlim([origin[0], origin[0] + grid.shape[1] * resolution])
 ax.set_ylim([origin[1], origin[1] + grid.shape[0] * resolution])
 
 plt.tight_layout()
-plt.savefig(f'{output_dir}/rrt_star_path_from_npz.png', dpi=150, bbox_inches='tight')
+plt.savefig(f'{output_dir}/rrt_star_path_from_npz{SUFFIX}.png', dpi=150, bbox_inches='tight')
 print(f"\n✓ Visualization saved: {output_dir}/rrt_star_path_from_npz.png")
 
 plt.show()

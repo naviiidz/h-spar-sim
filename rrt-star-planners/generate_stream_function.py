@@ -17,7 +17,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
-map_name = "sydney_regatta"
+import argparse
+
+_ap = argparse.ArgumentParser(add_help=False)
+_ap.add_argument("--map", default="sydney_regatta", help="folder in lookup_tables/")
+map_name = _ap.parse_known_args()[0].map
 
 LOOKUP_FOLDER = f"./lookup_tables/{map_name}"
 OUTPUT_DIR = f"./lookup_tables/{map_name}"

@@ -26,8 +26,8 @@ from scipy.spatial.distance import euclidean
 # -----------------------------------------------------------------------------
 # IO helpers (same loading pattern)
 # -----------------------------------------------------------------------------
-LOOKUP_FOLDER = "./lookup_tables/sydney_regatta"
-OUTPUT_DIR = "./lookup_tables/sydney_regatta/output"
+import planner_args  # noqa: E402
+LOOKUP_FOLDER, OUTPUT_DIR, SUFFIX = planner_args.parse()
 DATA_DIR = LOOKUP_FOLDER
 
 # Ensure output directory exists
@@ -181,16 +181,15 @@ class VFRRTStar(VFRRTStarSkeleton):
         self.epsilon = 1.0 #svf upstream_coefficient
         self.psi: Optional[np.ndarray] = None
         self.stream_grid: Optional[np.ndarray] = None
-        stream_path = f"{OUTPUT_DIR}/stream_function.npy"
-        try:
-            sg = np.load(stream_path)
-            if sg.shape == self.grid.shape:
-                self.psi = sg
-                self.stream_grid = sg
-            else:
-                print(f"Warning: stream grid shape {sg.shape} != occupancy shape {self.grid.shape}; stream lookup disabled.")
-        except Exception:
-            pass
+        # The stream function is written next to the other lookup tables
+        # (generate_stream_function.py); without it SVF-RRT* reduces to VF-RRT*.
+        stream_path = f"{LOOKUP_FOLDER}/stream_function.npy"
+        sg = np.load(stream_path)
+        if sg.shape != self.grid.shape:
+            raise ValueError(f"stream grid shape {sg.shape} != occupancy shape {self.grid.shape} ({stream_path})")
+        self.psi = sg
+        self.stream_grid = sg
+        print(f"✓ Stream function loaded: {stream_path}")
         self.grid_h, self.grid_w = self.grid.shape
         self.world_x_min = origin[0]
         self.world_y_min = origin[1]
@@ -208,6 +207,7 @@ class VFRRTStar(VFRRTStarSkeleton):
         self.current_path: List[Tuple[float, float]] = []
         self.path_psi_values: List[float] = []
         self.node_psi: Dict[int, float] = {}
+        self.goal_psi: Optional[float] = None
         self.stats = PlannerStats()
         self.recent_attempt_flags: Deque[int] = deque(maxlen=self.ineff_window_size)
 
@@ -307,8 +307,8 @@ class VFRRTStar(VFRRTStarSkeleton):
         # rectangular world bounding box.
         for _ in range(500):
             q = (
-                float(np.random.uniform(-600, 500)),
-                float(np.random.uniform(150, 300)),
+                float(np.random.uniform(self.world_x_min, self.world_x_max)),
+                float(np.random.uniform(self.world_y_min, self.world_y_max)),
             )
             if self.is_free_state(q):
                 s_q = self.lookup_stream(q)
@@ -371,18 +371,21 @@ class VFRRTStar(VFRRTStarSkeleton):
             psi_new = float(psi_new)
             self.path_psi_values.append(psi_new)
             self.node_psi[new_id] = psi_new
-        if new_id in self.node_psi:
-            print(f"node {new_id} -> psi {self.node_psi[new_id]}")
         if not self.path_psi_values:
             self.heuristic_interval = (-np.inf, np.inf)
             return self.path_psi_values
-        if self.epsilon==1:
-            self.heuristic_interval=(-np.inf, np.inf)
+        if self.epsilon >= 1.0:
+            self.heuristic_interval = (-np.inf, np.inf)
         else:
-            ke=self.epsilon/(1-self.epsilon)
-            delta_psi=abs(self.path_psi_values[-1]-self.path_psi_values[0])
-            self.heuristic_interval = (min(self.path_psi_values)-ke*delta_psi, max(self.path_psi_values)+ke*delta_psi)
-            print(self.node_psi)
+            # A path from start to goal crosses every streamline between psi_start and
+            # psi_goal, so the interval always spans both, widened by the upstream
+            # coefficient: k_e = eps / (1 - eps), delta_psi = |psi_goal - psi_start|.
+            ke = self.epsilon / (1.0 - self.epsilon)
+            psis = list(self.path_psi_values)
+            if self.goal_psi is not None:
+                psis.append(self.goal_psi)
+            delta_psi = abs(psis[-1] - self.path_psi_values[0])
+            self.heuristic_interval = (min(psis) - ke * delta_psi, max(psis) + ke * delta_psi)
         return self.path_psi_values
 
     def query_flow(self, q: Tuple[float, float]) -> np.ndarray:
@@ -477,7 +480,7 @@ class VFRRTStar(VFRRTStarSkeleton):
             f = self.query_flow(cur)
             integrand = float(np.linalg.norm(f) - np.dot(f, q_prime))
 
-            c_max+= float(np.linalg.norm(f)) * 2.0
+            c_max += 2.0 * float(np.linalg.norm(f)) * ds  # largest possible integrand, 2||f||
             total += integrand * ds
             prev = cur
 
@@ -695,6 +698,7 @@ class VFRRTStar(VFRRTStarSkeleton):
         goal_id: Optional[int] = None
         live_fig, live_ax = self._init_live_plot()
 
+        self.goal_psi = self.lookup_stream(goal)
         start_psi = self.lookup_stream(start)
         if start_psi is not None:
             self.node_psi[0] = float(start_psi)
@@ -877,7 +881,7 @@ def visualize_solution(
     ax.set_ylim([extent[2], extent[3]])
 
     plt.tight_layout()
-    plt.savefig(f"{output_dir}/svf_rrt_star_path_refactored.png", dpi=150, bbox_inches="tight")
+    plt.savefig(f"{output_dir}/svf_rrt_star_path_refactored{SUFFIX}.png", dpi=150, bbox_inches="tight")
     print(f"\n✓ Visualization saved: {output_dir}/svf_rrt_star_path_refactored.png")
     plt.show()
 
@@ -903,7 +907,7 @@ def main() -> None:
         resolution=resolution,
         interpolators=(u_interp, v_interp),
         # core planner
-        max_iter=200,
+        max_iter=planner_args.max_iter(200),
         step_size=10,
         goal_sample_rate=0.05,
         sample_checks=30,
@@ -949,7 +953,7 @@ def main() -> None:
 
     # Export waypoints to CSV
     if len(planner.path) > 0:
-        waypoints_path = f"{OUTPUT_DIR}/svf_waypoints.csv"
+        waypoints_path = f"{OUTPUT_DIR}/svf_waypoints{SUFFIX}.csv"
         with open(waypoints_path, 'w') as f:
             f.write("x,y\n")
             for x, y in planner.path:

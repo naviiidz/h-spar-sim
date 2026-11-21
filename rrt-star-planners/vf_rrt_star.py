@@ -25,8 +25,8 @@ from scipy.spatial.distance import euclidean
 # -----------------------------------------------------------------------------
 # IO helpers (same loading pattern)
 # -----------------------------------------------------------------------------
-LOOKUP_FOLDER = "./lookup_tables/sydney_regatta"
-OUTPUT_DIR = "./lookup_tables/sydney_regatta/output"
+import planner_args  # noqa: E402
+LOOKUP_FOLDER, OUTPUT_DIR, SUFFIX = planner_args.parse()
 DATA_DIR = LOOKUP_FOLDER
 
 # Ensure output directory exists
@@ -288,8 +288,8 @@ class VFRRTStar(VFRRTStarSkeleton):
         # rectangular world bounding box.
         for _ in range(500):
             q = (
-                float(np.random.uniform(-600, 500)),
-                float(np.random.uniform(150, 300)),
+                float(np.random.uniform(self.world_x_min, self.world_x_max)),
+                float(np.random.uniform(self.world_y_min, self.world_y_max)),
             )
             if self.is_free_state(q):
                 return q
@@ -771,7 +771,7 @@ def visualize_solution(
     ax.set_ylim([extent[2], extent[3]])
 
     plt.tight_layout()
-    plt.savefig(f"{output_dir}/vf_rrt_star_path_refactored.png", dpi=150, bbox_inches="tight")
+    plt.savefig(f"{output_dir}/vf_rrt_star_path_refactored{SUFFIX}.png", dpi=150, bbox_inches="tight")
     print(f"\n✓ Visualization saved: {output_dir}/vf_rrt_star_path_refactored.png")
     plt.show()
 
@@ -798,7 +798,7 @@ def main() -> None:
         resolution=resolution,
         interpolators=(u_interp, v_interp),
         # core planner
-        max_iter=200,
+        max_iter=planner_args.max_iter(200),
         step_size=10,
         goal_sample_rate=0.05,
         sample_checks=30,
@@ -845,7 +845,7 @@ def main() -> None:
 
     # Export final path to CSV
     if len(planner.path) > 0:
-        waypoints_path = f"{OUTPUT_DIR}/vf_waypoints.csv"
+        waypoints_path = f"{OUTPUT_DIR}/vf_waypoints{SUFFIX}.csv"
         with open(waypoints_path, "w") as f:
             f.write("x,y\n")
             for x, y in planner.path:
