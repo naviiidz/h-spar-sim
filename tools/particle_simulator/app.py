@@ -213,8 +213,12 @@ class App:
             return
         self.spin = result
         t_spin = result.t_spin
-        txt = (f"Mean speed starts at {result.speed[0]:.2f} m/s and settles at {result.level:.2f} m/s; "
-               f"it stays within ±{100 * result.band:.1f}% of that from t = {t_spin:g} s.")
+        if result.periodic:
+            txt = (f"The inflow varies with a period of {result.period_s:g} s. The flow repeats one period later "
+                   f"(change below {100 * result.band:g}% of the mean speed {result.level:.2f} m/s) from t = {t_spin:g} s.")
+        else:
+            txt = (f"Mean speed starts at {result.speed[0]:.2f} m/s and settles at {result.level:.2f} m/s; "
+                   f"it stays within ±{100 * result.band:.1f}% of that from t = {t_spin:g} s.")
         if self.field.cropped_from:
             c = self.field.cropped_from
             txt = (f"This field is {c['field']} from t = {c['start_s']:g} s on (spin-up already cropped). "
@@ -428,8 +432,14 @@ class App:
             ax.set_axis_off()
         else:
             ax.set_axis_on()
-            ax.plot(sp.t, sp.speed, color="#1f6fae", lw=1)
-            ax.axhspan(sp.level * (1 - sp.band), sp.level * (1 + sp.band), color="#1f6fae", alpha=0.12, lw=0)
+            if sp.periodic:
+                ax.semilogy(sp.mismatch_t, 100 * np.maximum(sp.mismatch, 1e-4), color="#1f6fae", lw=1)
+                ax.axhline(100 * sp.band, color="#1f6fae", ls="--", lw=0.8)
+                ax.set_ylabel(f"change over\n{sp.period_s:g} s (%)", fontsize=7)
+            else:
+                ax.plot(sp.t, sp.speed, color="#1f6fae", lw=1)
+                ax.axhspan(sp.level * (1 - sp.band), sp.level * (1 + sp.band), color="#1f6fae", alpha=0.12, lw=0)
+                ax.set_ylabel("mean speed\n(m/s)", fontsize=7)
             try:
                 tc = float(self.crop_var.get())
                 ax.axvline(tc, color="#c0392b", lw=1)
@@ -438,7 +448,6 @@ class App:
                 pass
             ax.set_xlim(0, self.field.duration)
             ax.set_xlabel("field time (s)", fontsize=7)
-            ax.set_ylabel("mean speed\n(m/s)", fontsize=7)
             ax.tick_params(labelsize=7)
         self.spin_canvas.draw_idle()
 

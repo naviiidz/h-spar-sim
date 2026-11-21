@@ -165,7 +165,11 @@ class Field:
             times = np.arange(len(self.files), dtype=float)
         self.field_dt = float(field_dt or default_field_dt(name, times))
         self.geometry, self._first = lsim.load_geometry(self.files[0])
-        self.ramp_s = float(field_info(name).get("ramp_s", 0.0))
+        info = field_info(name)
+        self.ramp_s = float(info.get("ramp_s", 0.0))
+        # inflow varied periodically by the flow generator: spin-up is judged by periodicity
+        self.variation = float(info.get("inflow_variation", 0.0))
+        self.period_s = float(info.get("variation_period_s", 0.0))
         self.cropped_from = _cropped_from(name)  # set for fields written by crop()
         self.edges = self._split_by_flow(boundary_edges(self.geometry.triangulation))
 
@@ -231,11 +235,33 @@ class Field:
         level = float(np.mean(tail)) if len(tail) else 0.0
         if level <= 0 or self.cropped_from:  # nothing to detect, or already cropped
             return SpinUp(t, speed, level, tol, 0.0)
+        if self.variation > 0 and self.period_s > 0 and self.duration > 2 * self.period_s:
+            return self._spin_up_periodic(series, t, speed, level, tol, max_samples)
         band = max(tol, 1.1 * float(np.max(np.abs(tail - level))) / level)
         outside = np.flatnonzero(np.abs(speed - level) > band * level)
         t_spin = float(t[min(outside[-1] + 1, n - 1)]) if len(outside) else 0.0
         t_spin = math.ceil(max(t_spin, self.ramp_s) / self.field_dt - 1e-9) * self.field_dt
         return SpinUp(t, speed, level, band, min(t_spin, self.duration))
+
+    def _spin_up_periodic(self, series, t, speed, level, tol, max_samples) -> "SpinUp":
+        """Spin-up for a periodically varying inflow: the flow must repeat one period later.
+
+        mismatch(t) = mean over the nodes of |u(t + P) - u(t)|, relative to the mean speed.
+        The spin-up ends at the first time after which the mismatch stays below `tol`.
+        """
+        P = self.period_s
+        n = int(min(max_samples, (self.duration - P) / self.field_dt + 1))
+        tm = np.linspace(0.0, self.duration - P, n)
+        xy = self.geometry.xy
+        mis = np.array([np.nanmean(np.linalg.norm(series.velocity(xy, ti + P)[0] - series.velocity(xy, ti)[0], axis=1))
+                        for ti in tm]) / level
+        above = np.flatnonzero(mis > tol)
+        if len(above) and above[-1] == n - 1:
+            t_spin = self.duration  # never repeats within the record
+        else:
+            t_spin = float(tm[above[-1] + 1]) if len(above) else 0.0
+        t_spin = math.ceil(max(t_spin, self.ramp_s) / self.field_dt - 1e-9) * self.field_dt
+        return SpinUp(t, speed, level, tol, min(t_spin, self.duration), mismatch_t=tm, mismatch=mis, period_s=P)
 
     def crop(self, t_start: float, name: str | None = None) -> Path:
         """Write a new field that starts at field time t_start (e.g. after the spin-up).
@@ -285,6 +311,13 @@ class SpinUp:
     level: float        # settled mean speed (mean of the last 30 %)
     band: float         # relative band the speed stays within after t_spin
     t_spin: float       # end of the spin-up (s, a whole number of snapshots)
+    mismatch_t: np.ndarray | None = None  # periodic inflow only: sample times
+    mismatch: np.ndarray | None = None    # relative change of the flow over one period
+    period_s: float = 0.0
+
+    @property
+    def periodic(self) -> bool:
+        return self.mismatch is not None
 
 
 @dataclass
