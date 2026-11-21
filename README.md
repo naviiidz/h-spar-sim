@@ -89,7 +89,7 @@ This launches:
 ### Step 2: Bridge Front- and Back-end 
 
 ```bash
-ros2 launch h_spar_experiments experiment1.launch.py
+ros2 launch h_spar_experiments experiment1.launch.py  # optional: field:=<name> field_time_offset_s:=1200.0 current_enabled:=false
 ```
 
 This launch file starts:
@@ -119,16 +119,23 @@ This script sends a preset sequence of navigation goals to the planner. Survey p
 ### Step 5: Run Particle Sampling Mechanism
 
 ```bash
-ros2 run particle_sampling particle_sampling_node --ros-args   -p probabilistic_sampling:=false   -p sampling_radius:=5.0   -p capture_v0:=0.5   -p capture_sigma:=0.2
+ros2 run particle_sampling particle_sampling_node --ros-args \
+  -p csv_path:=lagrangian_sim/outputs/<run>/<run>_particles.csv \
+  -p probabilistic_sampling:=true -p seed:=1 -p particle_time_offset_s:=1200.0
 
 ```
 
 Particle sampling parameters:
 
-- `probabilistic_sampling`: Enables the probabilistic capture model. Set to `true` to enable it; `false` uses deterministic geometric sampling.
-- `sampling_radius`: Candidate sampling radius around the USV, in meters.
-- `capture_v0`: Design intake velocity, in m/s. Capture probability is highest when relative particle speed equals this value.
-- `capture_sigma`: Sensitivity of capture probability to speed differences. Smaller values make capture more selective.
+- `probabilistic_sampling`: `true` captures each particle within `sampling_radius` of the USV with probability 1 − exp(−λΔt) per step, with λ = Q / (π r_s² h); `false` samples every particle within `sampling_radius`.
+- `sampling_radius`: radius r_s of the sampling region, in meters (default 5).
+- `pump_flow_m3h`, `intake_layer_m`: pump flow rate Q (default 25 m³/h) and intake layer thickness h (default 0.1 m).
+- `seed`: seed of the capture draws; record it with the results.
+- `particle_time_offset_s`: particle (CSV) time when the Gazebo clock reads 0, so that particles have spread before the mission starts (default 1200 s). Use the same value as `field_time_offset_s` of `drag_query_server` when the particles were generated on that field from its start.
+
+On shutdown the node writes, next to `report_path`, the first-sampled particles (`.csv`), a summary with the encountered, sampled and expected sampled counts (`_summary.json`), and a 1 s time series of the particles in the sampling region and the running counts (`_timeseries.csv`).
+
+The current felt by the USV is set by `drag_query_server` parameters: `field` (a folder in `velocity_fields/`, default `sydney_regatta_roi_from1326s`), `field_time_offset_s` (field time when the Gazebo clock reads 0) and `current_enabled` (`false` for no current, the VRX baseline). The current is interpolated within each triangle and in time, as for the particles.
 
 This starts the particle sampling node, which generates and tracks particle-based sampling behavior for the simulation workflow.
 

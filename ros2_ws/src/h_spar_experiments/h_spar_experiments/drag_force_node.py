@@ -33,7 +33,9 @@ class DragForceNode(Node):
         self.declare_parameter('current_topic', '/wamv/water_current')
         self.declare_parameter('drag_query_service', '/get_drag_force')
         self.declare_parameter('clock_topic', '/clock')
-        self.declare_parameter('timestamp_period', 521.0)
+        # Wrap the time sent to the server with this period (s); 0 = no wrap.
+        # The field must cover the whole mission (see drag_query_server).
+        self.declare_parameter('timestamp_period', 0.0)
         # SimpleHydrodynamics resets the current after 2 s of simulation time
         # without messages
         self.declare_parameter('publish_rate', 10.0)
@@ -84,7 +86,7 @@ class DragForceNode(Node):
         # State
         self.current_pose = None
         self.current_sim_time = None
-        self.timestamp_period = int(self.get_parameter('timestamp_period').value)
+        self.timestamp_period = float(self.get_parameter('timestamp_period').value)
         self.last_request_time = self.get_clock().now()
 
         # Timer for publishing
@@ -117,12 +119,12 @@ class DragForceNode(Node):
         quat = self.current_pose.pose.orientation
         theta = self.quaternion_to_yaw(quat.x, quat.y, quat.z, quat.w)
 
-        # Map simulation time into the available velocity-field window.
-        timestamp = int(self.current_sim_time)
+        # Gazebo time; the server adds its field_time_offset_s and interpolates in time.
+        timestamp = self.current_sim_time
         if self.timestamp_period > 0:
             timestamp = timestamp % self.timestamp_period
 
-        self.get_logger().debug(f'Timer called: timestamp={timestamp}, x={x:.2f}, y={y:.2f}, theta={theta:.2f}')
+        self.get_logger().debug(f'Timer called: timestamp={timestamp:.2f}, x={x:.2f}, y={y:.2f}, theta={theta:.2f}')
         
         # Query the current velocity
         self.query_drag_force(timestamp, x, y, theta)

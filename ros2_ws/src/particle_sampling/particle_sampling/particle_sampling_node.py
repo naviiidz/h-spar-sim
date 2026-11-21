@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import bisect
 import csv
 import math
+import json
+import os
 import random
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import DefaultDict, Optional, Dict, List
+from typing import DefaultDict, Optional
 
 import rclpy
 from geometry_msgs.msg import PoseStamped
@@ -38,14 +41,13 @@ class ParticleSamplingNode(Node):
         super().__init__('particle_sampling_node')
 
         self.declare_parameter('pose_topic', '/wamv/simple_pose')
+        repo_root = Path(os.environ.get('HSPAR_ROOT', str(Path.home() / 'h-spar-sim')))
         self.declare_parameter(
             'csv_path',
-            str(Path('/home/navid/h-spar-sim/lagrangian_sim/outputs/sydney_regatta/sydney_regatta_lagrangian_particle_trajectories.csv')),
+            str(repo_root / 'lagrangian_sim/outputs/sydney_regatta/sydney_regatta_lagrangian_particle_trajectories.csv'),
         )
         self.declare_parameter('sim_time_column', 'sim_tim')
         self.declare_parameter('fallback_time_column', 'time')
-        self.declare_parameter('front_length', 20.0)
-        self.declare_parameter('front_half_width', 5.0)
         self.declare_parameter('yaw_offset', 0.0)
         self.declare_parameter('position_tolerance', 0.5)
         self.declare_parameter(
@@ -60,20 +62,26 @@ class ParticleSamplingNode(Node):
 
         self.declare_parameter('report_path', '')
 
-        # Probabilistic sampling parameters. Disabled by default to preserve
-        # original deterministic behavior; enable with the `probabilistic_sampling`
-        # parameter.
+        # Probabilistic sampling (paper Sec. 2.6): a particle within sampling_radius of
+        # the USV is captured as a Poisson process with rate lambda_p = Q / V_s,
+        # V_s = pi r_s^2 h, i.e. with probability 1 - exp(-lambda_p dt) per step.
+        # Disabled by default: deterministic sampling, every particle within
+        # sampling_radius is sampled.
         self.declare_parameter('probabilistic_sampling', False)
         self.declare_parameter('sampling_radius', 5.0)
-        self.declare_parameter('capture_v0', 0.5)
-        self.declare_parameter('capture_sigma', 0.2)
+        self.declare_parameter('pump_flow_m3h', 25.0)
+        self.declare_parameter('intake_layer_m', 0.1)
+        # Seed of the capture draws; record it with the results so a run can be repeated.
+        self.declare_parameter('seed', 0)
+        # Particle (CSV) time when the Gazebo clock reads 0. The particle time is
+        # particle_time_offset_s + Gazebo time, so particles and the current
+        # (drag_query_server field_time_offset_s) stay on the same clock.
+        self.declare_parameter('particle_time_offset_s', 1200.0)
 
         pose_topic = self.get_parameter('pose_topic').value
         csv_path = Path(self.get_parameter('csv_path').value).expanduser()
         self.sim_time_column = str(self.get_parameter('sim_time_column').value)
         self.fallback_time_column = str(self.get_parameter('fallback_time_column').value)
-        self.front_length = float(self.get_parameter('front_length').value)
-        self.front_half_width = float(self.get_parameter('front_half_width').value)
         self.yaw_offset = float(self.get_parameter('yaw_offset').value)
         self.position_tolerance = float(self.get_parameter('position_tolerance').value)
         self.mesh_resource = str(self.get_parameter('mesh_resource').value)
@@ -86,21 +94,34 @@ class ParticleSamplingNode(Node):
         # Probabilistic sampling runtime options
         self.probabilistic_sampling = bool(self.get_parameter('probabilistic_sampling').value)
         self.sampling_radius = float(self.get_parameter('sampling_radius').value)
-        self.capture_v0 = float(self.get_parameter('capture_v0').value)
-        self.capture_sigma = float(self.get_parameter('capture_sigma').value)
+        self.pump_flow_m3s = float(self.get_parameter('pump_flow_m3h').value) / 3600.0
+        self.intake_layer_m = float(self.get_parameter('intake_layer_m').value)
+        self.seed = int(self.get_parameter('seed').value)
+        self.rng = random.Random(self.seed)
+        self.particle_time_offset_s = float(self.get_parameter('particle_time_offset_s').value)
+        v_s = math.pi * self.sampling_radius ** 2 * self.intake_layer_m
+        self.capture_rate = self.pump_flow_m3s / v_s if v_s > 0.0 else 0.0  # lambda_p (1/s)
+
+        # Running totals for the report: particles that entered the sampling region,
+        # expected number sampled (lambda_p * integral of N_c dt), and a 1 s time series.
+        self.encountered_ids: set[int] = set()
+        self.expected_sampled = 0.0
+        self.timeseries: list[tuple[float, float, int, float, int]] = []
+        self.first_stamp: Optional[float] = None
+        self.last_stamp: Optional[float] = None
+        self._last_series_t: Optional[float] = None
 
         report_path_value = str(self.get_parameter('report_path').value).strip()
 
         self.csv_path = self._resolve_csv_path(csv_path)
         self.report_path = self._resolve_report_path(report_path_value)
         self.samples_by_time = self._load_samples(self.csv_path)
-        # Build an index of particle trajectories for velocity estimation.
-        # Populated by _load_samples as `self.particle_trajectories`.
-        self.particle_trajectories: Dict[int, List[tuple[float, float, float]]] = getattr(self, 'particle_trajectories', {})
         self.csv_max_time = max(self.samples_by_time) if self.samples_by_time else 0.0
+        self.sorted_times = sorted(self.samples_by_time)
         self.last_reported_key: tuple[float, float, float, float] | None = None
         self.detection_records: dict[int, ParticleDetectionRecord] = {}
         self.published_particle_ids: set[int] = set()
+        self._last_published_samples: Optional[list] = None
 
         # For estimating robot velocity between successive poses
         self.last_pose_x: Optional[float] = None
@@ -108,10 +129,7 @@ class ParticleSamplingNode(Node):
         # Real-time stamp of last received pose (seconds since epoch)
         self.last_real_time: Optional[float] = None
 
-        # Internal simulation clock (starts at 0 every run) used to lookup
-        # particle samples from the CSV. This is independent of absolute
-        # ROS time in incoming poses.
-        self.sim_clock: float = 500.0
+        self.sim_clock: float = self.particle_time_offset_s
 
         self.pose_subscription = self.create_subscription(
             PoseStamped,
@@ -127,9 +145,10 @@ class ParticleSamplingNode(Node):
 
         self.get_logger().info(
             f'Particle sampling node ready. topic={pose_topic}, csv={self.csv_path}, '
-            f'front_length={self.front_length:.2f}, front_half_width={self.front_half_width:.2f}, '
             f'particle_marker_size={self.particle_marker_size:.2f}, '
-            f'probabilistic_sampling={self.probabilistic_sampling}, sampling_radius={self.sampling_radius:.2f}'
+            f'probabilistic_sampling={self.probabilistic_sampling}, sampling_radius={self.sampling_radius:.2f}, '
+            f'lambda_p={self.capture_rate:.3e} 1/s, seed={self.seed}, '
+            f'particle_time_offset_s={self.particle_time_offset_s:g}'
         )
 
     def _resolve_csv_path(self, csv_path: Path) -> Path:
@@ -171,11 +190,6 @@ class ParticleSamplingNode(Node):
                     f'or {self.fallback_time_column!r}; found {reader.fieldnames}'
                 )
 
-            # Build particle trajectories on-the-fly assuming CSV rows are
-            # ordered by simulation time. This avoids a separate per-particle
-            # sort after loading which is expensive for large files.
-            particle_trajectories: DefaultDict[int, list[tuple[float, float, float]]] = defaultdict(list)
-
             for row in reader:
                 try:
                     sim_time = float(row[time_column])
@@ -193,18 +207,9 @@ class ParticleSamplingNode(Node):
                     )
                 )
 
-                # Append to this particle's trajectory in time order
-                particle_trajectories[particle_id].append((sim_time, x, y))
-
-        # Attach particle trajectories (unsorted). We'll sort per-particle
-        # lazily on first velocity request to avoid large startup cost.
-        self.particle_trajectories = {pid: v for pid, v in particle_trajectories.items()}
-        self._particle_sorted: Dict[int, bool] = {}
-
         self.get_logger().info(
             f'Loaded {sum(len(items) for items in samples_by_time.values())} particle samples '
-            f'from {len(samples_by_time)} unique simulation times; '
-            f'particle trajectories={len(self.particle_trajectories)}'
+            f'from {len(samples_by_time)} unique simulation times'
         )
 
         return samples_by_time
@@ -223,22 +228,17 @@ class ParticleSamplingNode(Node):
             + self.yaw_offset
         )
 
-        # Advance internal sim clock based on elapsed real time between poses.
-        # Use the pose header stamp when available, otherwise use node clock.
+        # Particle time = offset + Gazebo time from the pose stamp (simulation time).
         stamp = msg.header.stamp
-        if stamp is not None:
-            current_real_time = float(stamp.sec) + float(stamp.nanosec) / 1e9
-        else:
-            # Fallback: use node wall clock
-            current_real_time = float(self.get_clock().now().sec) + float(self.get_clock().now().nanosec) / 1e9
-
+        current_real_time = float(stamp.sec) + float(stamp.nanosec) / 1e9
         if self.last_real_time is None:
             dt_real = 0.0
         else:
             dt_real = max(0.0, current_real_time - float(self.last_real_time))
-
-        # Advance sim clock (starts at 0 on node startup)
-        self.sim_clock += dt_real
+        if self.first_stamp is None:
+            self.first_stamp = current_real_time
+        self.last_stamp = current_real_time
+        self.sim_clock = self.particle_time_offset_s + current_real_time
 
         # Lookup particle samples according to the internal sim clock
         lookup_time = self._normalize_sim_time(self.sim_clock)
@@ -264,14 +264,10 @@ class ParticleSamplingNode(Node):
         self.last_reported_key = key
 
         ids_in_front = []
-
-        # Estimate robot velocity from last pose using real timestamps
-        v_r_x, v_r_y = 0.0, 0.0
-        if self.last_real_time is not None:
-            dt_robot = dt_real
-            if dt_robot > 0.0 and self.last_pose_x is not None and self.last_pose_y is not None:
-                v_r_x = (pose.x - float(self.last_pose_x)) / dt_robot
-                v_r_y = (pose.y - float(self.last_pose_y)) / dt_robot
+        n_candidates = 0
+        # Per-step capture probability; composes to the same cumulative probability
+        # for any pose rate.
+        p_c = 1.0 - math.exp(-self.capture_rate * dt_real)
 
         for sample in samples:
             rel_x, rel_y = self._world_to_robot_frame(
@@ -282,27 +278,21 @@ class ParticleSamplingNode(Node):
                 yaw,
             )
 
-            if self.probabilistic_sampling:
-                # Circular sampling region
-                distance = math.hypot(rel_x, rel_y)
-                if distance <= self.sampling_radius:
-                    # Estimate particle velocity and compute relative speed
-                    v_p_x, v_p_y = self._estimate_particle_velocity(sample.particle_id, lookup_time)
-                    rel_v_x = v_p_x - v_r_x
-                    rel_v_y = v_p_y - v_r_y
-                    rel_speed = math.hypot(rel_v_x, rel_v_y)
+            # Encounter: the particle is within sampling_radius of the USV.
+            if math.hypot(rel_x, rel_y) > self.sampling_radius:
+                continue
+            n_candidates += 1
+            self.encountered_ids.add(sample.particle_id)
+            if sample.particle_id in self.detection_records:
+                continue
+            # Deterministic: every encountered particle is sampled.
+            # Probabilistic: sampled with probability p_c in this step.
+            if not self.probabilistic_sampling or self.rng.random() < p_c:
+                ids_in_front.append(sample.particle_id)
 
-                    # Capture probability (Gaussian about design intake velocity v0)
-                    # Guard against sigma == 0
-                    sigma = max(self.capture_sigma, 1e-6)
-                    p_c = math.exp(-((rel_speed - self.capture_v0) ** 2) / (2.0 * sigma * sigma))
-
-                    if random.random() < p_c:
-                        ids_in_front.append(sample.particle_id)
-            else:
-                # Original deterministic rectangular front region
-                if 0.0 <= rel_x <= self.front_length and abs(rel_y) <= self.front_half_width:
-                    ids_in_front.append(sample.particle_id)
+        if self.probabilistic_sampling:
+            self.expected_sampled += self.capture_rate * n_candidates * dt_real
+        self._record_series(current_real_time, n_candidates)
 
         # Update stored robot pose/time for next velocity estimate
         self.last_pose_x = float(pose.x)
@@ -334,7 +324,11 @@ class ParticleSamplingNode(Node):
                 'particles_in_front=[]'
             )
 
-        # Publish all samples at this lookup time as visualization markers.
+        # Publish the particles as visualization markers when the snapshot changes
+        # (particle positions are stored once per CSV time step).
+        if samples is self._last_published_samples:
+            return
+        self._last_published_samples = samples
         try:
             marker_array = MarkerArray()
 
@@ -409,7 +403,44 @@ class ParticleSamplingNode(Node):
             # Do not let visualization errors disrupt node operation.
             self.get_logger().warn(f'Particle marker publishing failed: {exc}')
 
+    def _record_series(self, t: float, n_candidates: int) -> None:
+        """One row per second of Gazebo time: time, particle time, N_c, E[N_s] so far, sampled so far."""
+        if self._last_series_t is not None and t - self._last_series_t < 1.0:
+            return
+        self._last_series_t = t
+        self.timeseries.append((t, self.sim_clock, n_candidates, self.expected_sampled, len(self.detection_records)))
+
+    def write_summary(self) -> None:
+        self.report_path.parent.mkdir(parents=True, exist_ok=True)
+        summary = {
+            'csv_path': str(self.csv_path),
+            'probabilistic_sampling': self.probabilistic_sampling,
+            'seed': self.seed,
+            'sampling_radius_m': self.sampling_radius,
+            'pump_flow_m3h': self.pump_flow_m3s * 3600.0,
+            'intake_layer_m': self.intake_layer_m,
+            'capture_rate_per_s': self.capture_rate,
+            'particle_time_offset_s': self.particle_time_offset_s,
+            'gazebo_time_first_pose_s': self.first_stamp,
+            'gazebo_time_last_pose_s': self.last_stamp,
+            'encountered': len(self.encountered_ids),
+            'sampled': len(self.detection_records),
+            'expected_sampled': self.expected_sampled if self.probabilistic_sampling else None,
+        }
+        stem = self.report_path.with_suffix('')
+        Path(f'{stem}_summary.json').write_text(json.dumps(summary, indent=2))
+        with Path(f'{stem}_timeseries.csv').open('w', newline='') as handle:
+            writer = csv.writer(handle)
+            writer.writerow(['gazebo_time', 'particle_time', 'n_candidates', 'expected_sampled', 'sampled'])
+            for row in self.timeseries:
+                writer.writerow([f'{row[0]:.3f}', f'{row[1]:.3f}', row[2], f'{row[3]:.6f}', row[4]])
+        self.get_logger().info(
+            f'Encountered {summary["encountered"]}, sampled {summary["sampled"]}, '
+            f'expected {summary["expected_sampled"]}; wrote {stem}_summary.json and _timeseries.csv'
+        )
+
     def write_detection_report(self) -> None:
+        self.write_summary()
         if not self.detection_records:
             self.get_logger().info(
                 'No new particle detections recorded; skipping CSV report'
@@ -463,10 +494,10 @@ class ParticleSamplingNode(Node):
         if rounded_time in self.samples_by_time:
             return self.samples_by_time[rounded_time]
 
-        nearest_time = min(
-            self.samples_by_time,
-            key=lambda value: abs(value - sim_time),
-        )
+        if not self.sorted_times:
+            return []
+        i = bisect.bisect_left(self.sorted_times, sim_time)
+        nearest_time = min(self.sorted_times[max(i - 1, 0):i + 1], key=lambda value: abs(value - sim_time))
 
         if abs(nearest_time - sim_time) <= self.position_tolerance:
             return self.samples_by_time[nearest_time]
@@ -506,59 +537,6 @@ class ParticleSamplingNode(Node):
         lateral = -dx * sin_yaw + dy * cos_yaw
 
         return forward, lateral
-
-    def _estimate_particle_velocity(self, particle_id: int, sim_time: float) -> tuple[float, float]:
-        """Estimate particle velocity by finite differences from loaded samples.
-
-        Performs lazy per-particle sorting: the trajectory for `particle_id`
-        is sorted in-place on first use to avoid a heavy startup cost.
-        Returns (v_x, v_y) in the same frame as particle positions. If
-        insufficient samples exist, returns (0.0, 0.0).
-        """
-        traj = self.particle_trajectories.get(particle_id)
-        if not traj:
-            return 0.0, 0.0
-
-        # Sort trajectory on first access if needed
-        if not self._particle_sorted.get(particle_id, False):
-            try:
-                traj.sort(key=lambda e: e[0])
-            except Exception:
-                pass
-            self._particle_sorted[particle_id] = True
-
-        # traj is now sorted list of (time, x, y).
-        idx = 0
-        while idx < len(traj) and traj[idx][0] < sim_time:
-            idx += 1
-
-        # If sim_time is before the first sample, use forward difference
-        if idx == 0:
-            if len(traj) >= 2:
-                t1, x1, y1 = traj[0]
-                t2, x2, y2 = traj[1]
-                dt = t2 - t1
-                if dt > 0:
-                    return ((x2 - x1) / dt, (y2 - y1) / dt)
-            return 0.0, 0.0
-
-        # If sim_time is after the last sample, use backward difference
-        if idx >= len(traj):
-            if len(traj) >= 2:
-                t1, x1, y1 = traj[-2]
-                t2, x2, y2 = traj[-1]
-                dt = t2 - t1
-                if dt > 0:
-                    return ((x2 - x1) / dt, (y2 - y1) / dt)
-            return 0.0, 0.0
-
-        # Otherwise use centered difference between surrounding samples
-        t1, x1, y1 = traj[idx - 1]
-        t2, x2, y2 = traj[idx]
-        dt = t2 - t1
-        if dt <= 0.0:
-            return 0.0, 0.0
-        return ((x2 - x1) / dt, (y2 - y1) / dt)
 
 
 def main(args=None) -> None:

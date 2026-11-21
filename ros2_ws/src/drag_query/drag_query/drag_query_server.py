@@ -9,8 +9,7 @@ import yaml
 import math
 import numpy as np
 
-# Add velocity converter directory to path for importing velocity_lookup
-from drag_query.velocity_lookup import VelocityLookup
+from pathlib import Path
 
 class DragQueryServer(Node):
     def __init__(self):
@@ -23,15 +22,38 @@ class DragQueryServer(Node):
         # Load robot configuration
         self.load_robot_config()
         
-        # Load velocity field lookup database (HDF5)
-        self.lookup_db = '/home/navid/h-spar-sim/velocity_fields/sydney_regatta/h5/velocity_lookup.h5'
-        #self.lookup_db = '/home/navid/h-spar-sim/velocity_fields/sydney_regatta/h5/average_spatial_velocity.h5'
-        try:
-            self.velocity_lookup = VelocityLookup(self.lookup_db)
-            self.get_logger().info(f'Loaded velocity lookup database: {self.lookup_db}')
-        except Exception as e:
-            self.get_logger().error(f'Failed to load velocity lookup database: {e}')
-            self.velocity_lookup = None
+        # Velocity field: a field written by the flow generator (velocity_fields/<field>),
+        # interpolated linearly within each triangle and linearly in time, as for the
+        # particles (tools/particle_simulator/engine.py).
+        # field time = field_time_offset_s + Gazebo time; use the same offset as the
+        # particle_sampling node's particle_time_offset_s when the particles were
+        # generated on this field from its t = 0.
+        repo_root = Path(os.environ.get('HSPAR_ROOT', str(Path.home() / 'h-spar-sim')))
+        self.declare_parameter('repo_root', str(repo_root))
+        self.declare_parameter('field', 'sydney_regatta_roi_from1326s')
+        self.declare_parameter('field_time_offset_s', 1200.0)
+        # False: no current (VRX baseline); the service then returns zero velocity.
+        self.declare_parameter('current_enabled', True)
+        self.field_name = str(self.get_parameter('field').value)
+        self.field_time_offset_s = float(self.get_parameter('field_time_offset_s').value)
+        self.current_enabled = bool(self.get_parameter('current_enabled').value)
+        self.series = None
+        self.field_duration = 0.0
+        self._warned_end = False
+        if self.current_enabled:
+            try:
+                sys.path.insert(0, str(Path(self.get_parameter('repo_root').value) / 'tools' / 'particle_simulator'))
+                import engine  # noqa: E402  (flow generator / particle simulator field reader)
+                field = engine.Field(self.field_name)
+                self.series = field.new_series()
+                self.field_duration = float(field.duration)
+                self.get_logger().info(
+                    f'Loaded field {self.field_name}: {len(field.files)} snapshots, {self.field_duration:g} s; '
+                    f'field time = {self.field_time_offset_s:g} s + Gazebo time')
+            except Exception as e:
+                self.get_logger().error(f'Failed to load velocity field {self.field_name}: {e}')
+        else:
+            self.get_logger().info('Current disabled (current_enabled=false): returning zero velocity')
         
         self.get_logger().info('Velocity Field Lookup Service is ready')
 
@@ -68,60 +90,28 @@ class DragQueryServer(Node):
             self.robot_length = 3.0
             self.water_density = 1025.0
 
-    def get_velocity_at_position(self, timestamp, x, y, tolerance=0.5):
-        """Query velocity field at a position for a given timestamp
-        
-        Args:
-            timestamp: Time index
-            x, y: Position coordinates
-            tolerance: Tolerance for nearest neighbor matching
-        
-        Returns:
-            [vx, vy] velocity vector or None
-        """
-        if self.velocity_lookup is None:
-            return None
-        
-        try:
-            # Convert timestamp to int (service receives floats)
-            timestamp = int(timestamp)
-            
-            # Try exact match within tolerance first
-            vel = self.velocity_lookup.get_velocity_at_point(timestamp, x, y, tolerance=tolerance)
-            if vel is not None:
-                return vel
-            
-            # Fall back to nearest neighbor
-            vel, _ = self.velocity_lookup.get_nearest_velocity(timestamp, x, y)
-            return vel
-        except Exception as e:
-            self.get_logger().warn(f'Error querying velocity at ({x}, {y}) t={timestamp}: {e}')
-            return None
-
     def find_closest_velocity(self, timestamp, robot_x, robot_y):
-        """Find velocity at robot position using HDF5 lookup
-        
-        Args:
-            timestamp: Time index
-            robot_x, robot_y: Robot position
-            
-        Returns:
-            [vx, vy] velocity vector or None
+        """Current [vx, vy] at the robot position and Gazebo time `timestamp`.
+
+        Zero when the current is disabled or the robot is outside the mesh; after the
+        end of the field the last snapshot is held (warned once).
         """
-        vel = self.get_velocity_at_position(timestamp, robot_x, robot_y, tolerance=0.5)
-        
-        if vel is not None:
-            self.get_logger().debug(
-                f'Velocity at ({robot_x:.2f}, {robot_y:.2f}): {vel}'
-            )
-        
-        return vel
+        if not self.current_enabled or self.series is None:
+            return np.zeros(2)
+        t_field = self.field_time_offset_s + float(timestamp)
+        if t_field > self.field_duration and not self._warned_end:
+            self.get_logger().warn(
+                f'Field time {t_field:.0f} s is past the end of {self.field_name} '
+                f'({self.field_duration:g} s); holding the last snapshot')
+            self._warned_end = True
+        vel, _ = self.series.velocity(np.array([[robot_x, robot_y]], dtype=float), t_field)
+        return np.nan_to_num(vel[0])
 
     def handle_get_drag_force(self, request, response):
         """
         Handle GetDragForce service request.
-        Look up the water current velocity at the robot position from the HDF5
-        database. The force follows from VRX SimpleHydrodynamics, which damps
+        Look up the water current velocity at the robot position from the
+        velocity field. The force follows from VRX SimpleHydrodynamics, which damps
         the velocity relative to this current.
         """
         self.get_logger().debug(
@@ -132,11 +122,6 @@ class DragQueryServer(Node):
         try:
             # Find velocity at robot position from HDF5 lookup
             velocity = self.find_closest_velocity(request.timestamp, request.x, request.y)
-            if velocity is None:
-                self.get_logger().warn(f'No velocity data found for timestamp {request.timestamp}')
-                response.vx = 0.0
-                response.vy = 0.0
-                return response
 
             response.vx = float(velocity[0])
             response.vy = float(velocity[1])
