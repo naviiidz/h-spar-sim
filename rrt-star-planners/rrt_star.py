@@ -174,7 +174,8 @@ class RRTStar:
                         self.costs[idx] = new_cost
             
             # Check if goal reached
-            if euclidean(new_point, goal) < self.step_size:
+            if euclidean(new_point, goal) < self.step_size and self.is_collision_free(
+                    new_point[0], new_point[1], goal[0], goal[1]):
                 self.nodes.append(goal)
                 goal_idx = len(self.nodes) - 1
                 self.edges[goal_idx] = new_idx
@@ -329,7 +330,7 @@ goal = (-100, 280)
 
 
 # Run RRT*
-rrt = RRTStar(grid, origin, resolution, max_iter=planner_args.max_iter(1000), step_size=20, goal_sample_rate=0.05)
+rrt = RRTStar(grid, origin, resolution, max_iter=planner_args.max_iter(1000), step_size=10, goal_sample_rate=0.05)
 success = rrt.plan(start, goal)
 
 # Print results

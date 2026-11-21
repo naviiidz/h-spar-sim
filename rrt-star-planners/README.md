@@ -62,7 +62,7 @@ Then plan with a documented seed, one run per seed:
 for seed in $(seq 1 10); do
   python3 rrt_star.py     --map sydney_regatta_roi --seed $seed --no-show
   python3 vf_rrt_star.py  --map sydney_regatta_roi --seed $seed --no-show --max-iter 1000
-  python3 svf_rrt_star.py --map sydney_regatta_roi --seed $seed --no-show --max-iter 1000
+  python3 svf_rrt_star.py --map sydney_regatta_roi --seed $seed --no-show --max-iter 2000
 done
 ```
 

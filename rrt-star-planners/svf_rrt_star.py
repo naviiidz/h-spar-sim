@@ -658,6 +658,8 @@ class VFRRTStar(VFRRTStarSkeleton):
             return None
 
         # inefficiency condition 2: no meaningful expansion (< step_size from nearest node)
+        # (this is why goal_tolerance must be at least step_size: with a smaller tolerance a
+        # node 5-10 m from the goal blocks every later node that would land inside it)
         nearest_existing_dist = min(euclidean(node, q_new) for node in self.nodes)
         if nearest_existing_dist + 1e-12 < self.step_size:
             self._record_expansion_attempt(inefficient=True)
@@ -912,7 +914,7 @@ def main() -> None:
         goal_sample_rate=0.05,
         sample_checks=30,
         rewire_base_radius=200.0,
-        goal_tolerance=5.0,
+        goal_tolerance=10.0,  # = step_size; must not be below it, see extend()
         log_every=100,
         # adaptive lambda tuning
         lambda_gain=1.0,
