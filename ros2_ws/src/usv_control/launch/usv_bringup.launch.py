@@ -24,7 +24,7 @@ def generate_launch_description():
             executable='parameter_bridge',
             name='left_thruster_bridge',
             arguments=[
-                '/wamv/thrusters/left/thrust@std_msgs/msg/Float64@gz.msgs.Double'
+                '/wamv/thrusters/left/thrust@std_msgs/msg/Float64]gz.msgs.Double'  # ROS -> Gazebo only: a two-way bridge echoes with the VRX thruster bridge (kHz message storm)
             ],
             output='screen'
         ),
@@ -35,7 +35,7 @@ def generate_launch_description():
             executable='parameter_bridge',
             name='right_thruster_bridge',
             arguments=[
-                '/wamv/thrusters/right/thrust@std_msgs/msg/Float64@gz.msgs.Double'
+                '/wamv/thrusters/right/thrust@std_msgs/msg/Float64]gz.msgs.Double'  # ROS -> Gazebo only, see above
             ],
             output='screen'
         ),

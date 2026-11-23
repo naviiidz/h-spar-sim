@@ -77,7 +77,9 @@ public:
     // Remove odometry subscriber - we'll use TF transforms instead
     
         // Create timer for control loop (50 Hz for very fast response)
-    control_timer_ = this->create_wall_timer(
+    // Node clock: Gazebo time when use_sim_time is true, so the loop runs at 50 Hz of
+    // simulated time even when Gazebo runs slower than real time.
+    control_timer_ = this->create_timer(
       std::chrono::milliseconds(20),  // 20ms = 50Hz (was 50ms = 20Hz)
       [this]() { this->controlCallback(); }
     );

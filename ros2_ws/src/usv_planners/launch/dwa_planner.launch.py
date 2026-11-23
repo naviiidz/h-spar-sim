@@ -43,7 +43,8 @@ def generate_launch_description():
             'sim_time': 1.0,           # Reduced prediction time for faster response (was 2.0)
             'sim_granularity': 0.2,    # Increased granularity for faster computation (was 0.1)
             'vx_samples': 5,           # Fewer velocity samples for speed (was 10)
-            'vyaw_samples': 10         # Fewer angular samples for speed (was 20)
+            'vyaw_samples': 10,        # Fewer angular samples for speed (was 20)
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
         }],
         remappings=[
             ('odom', '/odom'),
@@ -68,7 +69,8 @@ def generate_launch_description():
             'path_width': 0.5,
             'max_path_points': 1000,
             'min_distance_threshold': 0.5,
-            'publish_rate': 10.0
+            'publish_rate': 10.0,
+            'use_sim_time': LaunchConfiguration('use_sim_time'),
         }],
         output='screen'
     )

@@ -58,7 +58,16 @@ class SequentialGoalSender(Node):
         # Timer to check goal status
         self.timer = self.create_timer(1.0, self.check_goal_status)
         
+        # Batch runs (tools/experiments/run_missions.py) set HSPAR_BATCH=1: no pkill at the
+        # end, and the trajectory is recorded every HSPAR_TRAJ_DT s of node time.
+        self.batch_mode = os.environ.get("HSPAR_BATCH", "") == "1"
+        self.trajectory_record_interval = float(os.environ.get("HSPAR_TRAJ_DT", self.trajectory_record_interval))
+
         self.get_logger().info("Sequential Goal Sender initialized with position tracking")
+
+    def _now(self):
+        """Node time in seconds: the Gazebo clock when use_sim_time is true, else wall time."""
+        return self.get_clock().now().nanoseconds * 1e-9
     
     def setup_odometry_subscription(self):
         """Try to subscribe to available odometry topics"""
@@ -108,7 +117,7 @@ class SequentialGoalSender(Node):
                                   f"y={self.current_position['y']:.2f}")
         
         # Record trajectory if recording is active and enough time has passed
-        current_time = time.time()
+        current_time = self._now()
         if (self.trajectory_recording_active and 
             current_time - self.last_trajectory_record_time >= self.trajectory_record_interval):
             self.record_trajectory_point()
@@ -138,7 +147,7 @@ class SequentialGoalSender(Node):
                                   f"y={self.current_position['y']:.2f}")
         
         # Record trajectory if recording is active and enough time has passed
-        current_time = time.time()
+        current_time = self._now()
         if (self.trajectory_recording_active and 
             current_time - self.last_trajectory_record_time >= self.trajectory_record_interval):
             self.record_trajectory_point()
@@ -147,7 +156,9 @@ class SequentialGoalSender(Node):
     
     def record_trajectory_point(self):
         """Record current robot position as part of trajectory"""
-        current_time = time.time()
+        current_time = self._now()
+        if not self.mission_start_time:  # the sim clock may not have arrived when the mission started
+            self.mission_start_time = current_time
         
         # Calculate mission elapsed time
         mission_elapsed = current_time - self.mission_start_time if self.mission_start_time else 0
@@ -162,7 +173,8 @@ class SequentialGoalSender(Node):
             )
         
         trajectory_entry = {
-            'timestamp': datetime.fromtimestamp(current_time).isoformat(),
+            'timestamp': datetime.now().isoformat(),
+            'sim_time_sec': current_time,
             'mission_time_sec': mission_elapsed,
             'x_ned': self.current_position['x'],
             'y_ned': self.current_position['y'],
@@ -175,7 +187,7 @@ class SequentialGoalSender(Node):
         }
         self.trajectory_log.append(trajectory_entry)
         
-        self.get_logger().info(f"Trajectory point {len(self.trajectory_log)} recorded: x={self.current_position['x']:.2f}, "
+        self.get_logger().debug(f"Trajectory point {len(self.trajectory_log)} recorded: x={self.current_position['x']:.2f}, "
                                f"y={self.current_position['y']:.2f}, goal={trajectory_entry['current_goal_number']}")
     
     def add_goal(self, x, y, yaw=0.0):
@@ -302,14 +314,15 @@ class SequentialGoalSender(Node):
             with open(filename, 'w', newline='') as csvfile:
                 writer = csv.writer(csvfile)
                 writer.writerow([
-                    'timestamp', 'mission_time_sec', 'x_ned', 'y_ned', 'z_ned', 'yaw_rad', 'yaw_deg', 
+                    'timestamp', 'sim_time_sec', 'mission_time_sec', 'x_ned', 'y_ned', 'z_ned', 'yaw_rad', 'yaw_deg', 
                     'current_goal_number', 'distance_to_current_goal', 'navigation_status'
                 ])
                 
                 for entry in self.trajectory_log:
                     writer.writerow([
                         entry['timestamp'],
-                        round(entry['mission_time_sec'], 2),
+                        round(entry['sim_time_sec'], 3),
+                        round(entry['mission_time_sec'], 3),
                         round(entry['x_ned'], 3),
                         round(entry['y_ned'], 3),
                         round(entry['z_ned'], 3),
@@ -446,7 +459,8 @@ class SequentialGoalSender(Node):
         self.goal_publisher.publish(goal_msg)
         self.goal_sent = True
         self.navigation_complete = False
-        self.goal_start_time = time.time()
+        self.goal_start_time = self._now()
+        self.goal_start_wall = datetime.now().isoformat()
         
         # Record trajectory point when goal is sent
         if self.trajectory_recording_active and self.position_received:
@@ -457,7 +471,7 @@ class SequentialGoalSender(Node):
         
         # Log goal start
         if self.start_time is None:
-            self.start_time = time.time()
+            self.start_time = self._now()
         
         self.get_logger().info(
             f"Sent goal {self.current_goal_index + 1}/{len(self.goals)}: "
@@ -482,7 +496,7 @@ class SequentialGoalSender(Node):
                 self.record_trajectory_point()
             
             # Log completed goal
-            end_time = time.time()
+            end_time = self._now()
             goal_data = self.goals[self.current_goal_index]
             duration = end_time - self.goal_start_time if self.goal_start_time else 0
             
@@ -491,8 +505,8 @@ class SequentialGoalSender(Node):
                 'x': goal_data['x'],
                 'y': goal_data['y'],
                 'yaw': goal_data['yaw'],
-                'start_time': datetime.fromtimestamp(self.goal_start_time).isoformat() if self.goal_start_time else '',
-                'end_time': datetime.fromtimestamp(end_time).isoformat(),
+                'start_time': getattr(self, 'goal_start_wall', ''),
+                'end_time': datetime.now().isoformat(),
                 'duration': duration,
                 'status': 'COMPLETED'
             }
@@ -511,7 +525,6 @@ class SequentialGoalSender(Node):
                 return
             else:
                 self.get_logger().info("🎉 All goals completed successfully!")
-                subprocess.run(["pkill", "-f", "ros2"], check=False)
                 # Stop trajectory recording
                 self.trajectory_recording_active = False
                 
@@ -522,7 +535,12 @@ class SequentialGoalSender(Node):
                     self.get_logger().info(f"Mission completed! Recorded {len(self.trajectory_log)} trajectory points over {len(self.goals)} goals")
                 else:
                     self.get_logger().warn("No trajectory data recorded - check odometry topic")
-                
+
+                # Interactive use: stop the other ROS processes (after the logs are saved,
+                # since this process matches the pattern too). Batch runs stop their own.
+                if not self.batch_mode:
+                    subprocess.run(["pkill", "-f", "ros2"], check=False)
+
                 # Proper shutdown
                 self.destroy_node()
                 if rclpy.ok():
@@ -530,9 +548,9 @@ class SequentialGoalSender(Node):
                 return
         
         # Check for timeout
-        elif self.goal_start_time and (time.time() - self.goal_start_time) > self.goal_timeout:
+        elif self.goal_start_time and (self._now() - self.goal_start_time) > self.goal_timeout:
             # Log timed out goal
-            end_time = time.time()
+            end_time = self._now()
             goal_data = self.goals[self.current_goal_index]
             duration = end_time - self.goal_start_time
             
@@ -541,8 +559,8 @@ class SequentialGoalSender(Node):
                 'x': goal_data['x'],
                 'y': goal_data['y'],
                 'yaw': goal_data['yaw'],
-                'start_time': datetime.fromtimestamp(self.goal_start_time).isoformat(),
-                'end_time': datetime.fromtimestamp(end_time).isoformat(),
+                'start_time': getattr(self, 'goal_start_wall', ''),
+                'end_time': datetime.now().isoformat(),
                 'duration': duration,
                 'status': 'TIMEOUT'
             }
@@ -566,7 +584,7 @@ class SequentialGoalSender(Node):
         self.get_logger().info(f"Starting execution of {len(self.goals)} goals...")
         
         # Initialize mission tracking
-        self.mission_start_time = time.time()
+        self.mission_start_time = self._now()
         self.trajectory_recording_active = True
         self.get_logger().info(f"🔴 Trajectory recording activated. Position received: {self.position_received}")
         
