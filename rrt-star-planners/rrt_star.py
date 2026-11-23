@@ -14,7 +14,7 @@ class RRTStar:
     """RRT* path planning algorithm"""
     
     def __init__(self, occupancy_grid, origin, resolution, max_iter=5000, 
-                 step_size=10, goal_sample_rate=0.15):
+                 step_size=30, goal_sample_rate=0.15):
         """
         occupancy_grid: 2D numpy array (0=free, 100=occupied)
         origin: (x_min, y_min) in world coordinates
@@ -102,6 +102,7 @@ class RRTStar:
         # Initialize tree with start node
         self.nodes = [start]
         self.edges = {0: None}
+        self.children = {}
         self.costs = [0.0]
         
         print(f"\n{'='*60}")
@@ -114,16 +115,14 @@ class RRTStar:
         print(f"Iterations: {self.max_iter}, Step size: {self.step_size}")
         print(f"{'='*60}")
         
-        goal_reached = False
-        goal_idx = None
+        goal_candidates = []  # nodes within step_size of the goal with a free link to it
         start_time = time.time()
         
         for iteration in range(self.max_iter):
             random_point = self.sample_state(goal)
             
             # Find nearest node
-            nearest_idx = min(range(len(self.nodes)),
-                            key=lambda i: euclidean(self.nodes[i], random_point))
+            nearest_idx = int(np.argmin(np.hypot(*(np.asarray(self.nodes) - np.asarray(random_point)).T)))
             nearest_node = self.nodes[nearest_idx]
             
             # Steer towards random point
@@ -160,6 +159,7 @@ class RRTStar:
             self.nodes.append(new_point)
             new_idx = len(self.nodes) - 1
             self.edges[new_idx] = best_parent
+            self.children.setdefault(best_parent, set()).add(new_idx)
             self.costs.append(best_cost)
 
             # Rewire neighbors
@@ -170,39 +170,53 @@ class RRTStar:
                 if new_cost < self.costs[idx]:
                     if self.is_collision_free(self.nodes[idx][0], self.nodes[idx][1],
                                               new_point[0], new_point[1]):
+                        self.children[self.edges[idx]].discard(idx)
                         self.edges[idx] = new_idx
+                        self.children.setdefault(new_idx, set()).add(idx)
                         self.costs[idx] = new_cost
-            
-            # Check if goal reached
+                        self._propagate_costs(idx)  # descendants of idx get the new cost-to-come
+
+            # Goal check: remember the node and keep planning; the best connection is taken at the end
             if euclidean(new_point, goal) < self.step_size and self.is_collision_free(
                     new_point[0], new_point[1], goal[0], goal[1]):
-                self.nodes.append(goal)
-                goal_idx = len(self.nodes) - 1
-                self.edges[goal_idx] = new_idx
-                goal_reached = True
-                elapsed = time.time() - start_time
-                print(f"✓ Goal reached at iteration {iteration + 1} ({elapsed:.2f}s)")
-                self.path = self._extract_path(goal_idx)
-                return True
+                if not goal_candidates:
+                    print(f"  first connection to the goal at iteration {iteration + 1} "
+                          f"({time.time() - start_time:.2f}s)")
+                goal_candidates.append(new_idx)
             
             if (iteration + 1) % 200 == 0:
                 elapsed = time.time() - start_time
                 print(f"  Iteration {iteration + 1}/{self.max_iter}, "
                       f"nodes: {len(self.nodes)}, time: {elapsed:.1f}s")
         
-        if goal_reached and goal_idx is not None:
+        if goal_candidates:
+            best = min(goal_candidates, key=lambda i: self.costs[i] + euclidean(self.nodes[i], goal))
+            self.nodes.append(goal)
+            goal_idx = len(self.nodes) - 1
+            self.edges[goal_idx] = best
+            self.costs.append(self.costs[best] + euclidean(self.nodes[best], goal))
             self.path = self._extract_path(goal_idx)
+            print(f"✓ Goal reached: best of {len(goal_candidates)} connections after {self.max_iter} iterations "
+                  f"({time.time() - start_time:.2f}s)")
             return True
-        else:
-            # Return path to closest node to goal
-            closest_idx = min(range(len(self.nodes)),
-                            key=lambda i: euclidean(self.nodes[i], goal))
-            self.path = self._extract_path(closest_idx)
-            dist_to_goal = euclidean(self.nodes[closest_idx], goal)
-            print(f"⚠ Goal not reached exactly")
-            print(f"  Closest node distance to goal: {dist_to_goal:.1f} m")
-            return False
-    
+        # Return path to closest node to goal
+        closest_idx = min(range(len(self.nodes)),
+                          key=lambda i: euclidean(self.nodes[i], goal))
+        self.path = self._extract_path(closest_idx)
+        dist_to_goal = euclidean(self.nodes[closest_idx], goal)
+        print(f"⚠ Goal not reached exactly")
+        print(f"  Closest node distance to goal: {dist_to_goal:.1f} m")
+        return False
+
+    def _propagate_costs(self, root):
+        """Update the cost-to-come of every descendant of root after root was rewired."""
+        queue = [root]
+        while queue:
+            u = queue.pop()
+            for c in self.children.get(u, ()):
+                self.costs[c] = self.costs[u] + euclidean(self.nodes[u], self.nodes[c])
+                queue.append(c)
+
     def _extract_path(self, end_idx):
         """Extract path from root to end_idx"""
         path = []
@@ -219,11 +233,12 @@ class RRTStar:
 
     def _neighbor_radius(self, n):
         """Adaptive neighbor radius for RRT*"""
-        return max(30.0, 50.0 * math.sqrt(math.log(n + 1) / (n + 1)))
+        return max(30.0, 200.0 * math.sqrt(math.log(n + 1) / (n + 1)))  # as VF-RRT*/SVF-RRT*
 
     def _near_indices(self, point, radius):
         """Find nodes within a given radius"""
-        return [i for i, node in enumerate(self.nodes) if euclidean(node, point) <= radius]
+        d = np.hypot(*(np.asarray(self.nodes) - np.asarray(point, dtype=float)).T)
+        return np.flatnonzero(d <= radius).tolist()
 
 # ============================================================
 # MAIN: Load occupancy grid and run RRT*
@@ -307,7 +322,9 @@ origin_y = float(data['origin_y'])
 resolution = float(data['resolution'])
 origin = (origin_x, origin_y)
 
-print(f"✓ Loaded occupancy grid: {grid.shape}")
+land = grid
+grid = planner_args.inflate(grid, resolution, planner_args.clearance())
+print(f"✓ Loaded occupancy grid: {grid.shape}, clearance {planner_args.clearance():g} m")
 print(f"  Origin: ({origin_x:.1f}, {origin_y:.1f})")
 print(f"  Resolution: {resolution} m/cell")
 
@@ -325,12 +342,12 @@ except Exception:
 # grid = np.flipud(grid)
 
 # Define start and goal in free space
-start = (-400, 200)
-goal = (-100, 280)
+start = planner_args.START
+goal = planner_args.GOAL
 
 
 # Run RRT*
-rrt = RRTStar(grid, origin, resolution, max_iter=planner_args.max_iter(1000), step_size=10, goal_sample_rate=0.05)
+rrt = RRTStar(grid, origin, resolution, max_iter=planner_args.max_iter(2000), step_size=30, goal_sample_rate=0.05)  # step = goal radius = 30 m, as VF-RRT*/SVF-RRT*
 success = rrt.plan(start, goal)
 
 # Print results

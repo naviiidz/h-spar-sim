@@ -41,3 +41,5 @@ Thumbs.db
 *~
 
 .csv
+# Paper experiment tools and outputs (kept local)
+tools/experiments/

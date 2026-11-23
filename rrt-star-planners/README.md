@@ -61,12 +61,16 @@ Then plan with a documented seed, one run per seed:
 ```bash
 for seed in $(seq 1 10); do
   python3 rrt_star.py     --map sydney_regatta_roi --seed $seed --no-show
-  python3 vf_rrt_star.py  --map sydney_regatta_roi --seed $seed --no-show --max-iter 1000
-  python3 svf_rrt_star.py --map sydney_regatta_roi --seed $seed --no-show --max-iter 2000
+  python3 vf_rrt_star.py  --map sydney_regatta_roi --seed $seed --no-show
+  python3 svf_rrt_star.py --map sydney_regatta_roi --seed $seed --no-show
 done
 ```
 
-Each run writes `lookup_tables/<map>/output/<planner>_waypoints_seed<N>.csv` (columns `x,y`), which the goal sender follows with `ros2 run usv_planners sequential_goal_sender --preset astar_wp_file <csv>`. A planner stops as soon as it reaches the goal, so `--max-iter` is only an upper bound; SVF-RRT* rejects samples outside its stream-function interval and needs more iterations than the other two.
+Each run writes `lookup_tables/<map>/output/<planner>_waypoints_seed<N>.csv` (columns `x,y`), which the goal sender follows with `ros2 run usv_planners sequential_goal_sender --preset astar_wp_file <csv>`.
+
+All three planners run a fixed budget of 2000 iterations (`--max-iter`) and return the cheapest path to the goal, with a step and goal radius of 30 m. RRT\* minimises path length. VF-RRT\* and SVF-RRT\* (`vf_rrt_core.py`) follow Zhang et al., "SVF-RRT\*: A Stream-Based VF-RRT\* for USVs Path Planning Considering Ocean Currents", IEEE RA-L 8(4), 2023: upstream-criterion cost (Eq. 1), VF-RRT direction sampling with the λ update of Eq. 2, inefficient nodes counted but kept, R_rewire = min(δ, γ (log|V|/|V|)^(1/2)); SVF-RRT\* adds, whenever a cheaper path is found, the upstream coefficient ε (Eq. 7), the stream-function interval (Alg. 2), tree pruning (Alg. 4), biased sampling (Alg. 3) and the λ update of Eqs. 12–13. Parameters are those of the paper's Table I (E_s = 0.3, λ₀ = 3, n = 100, δ = r = 30). `--length-factor k` adds k × (mean current speed) × length to the cost, a variant that is not part of the paper.
+
+All three planners keep a clearance from the shore (`--clearance`, default 10 m): water cells closer to land than the clearance are treated as obstacles. Start (−400, 200) and goal (−100, 270) are shared through `planner_args.py`.
 
 ## Notes
 
