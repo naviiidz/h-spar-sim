@@ -4,6 +4,10 @@
 
 A ROS2-based hydrodynamic simulation environment for autonomous surface vehicles (ASVs) using Gazebo and the Virtual RobotX (VRX) framework.
 
+![Survey with and without the current wrench](docs/assets/hspar-sampling.gif)
+
+*The same survey in Gazebo, in the same time-varying current and particle field: without the current wrench on the vehicle (left, VRX) and with it (right, H-SPAR). With the wrench, the vehicle crabs into the current, drifts off its lanes and takes longer; particles within the 5 m sampling radius turn orange.*
+
 ## Overview
 
 This project simulates an autonomous surface vehicle in a water environment with:
